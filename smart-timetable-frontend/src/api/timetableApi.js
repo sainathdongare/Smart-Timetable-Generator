@@ -1,4 +1,5 @@
-const API_BASE_URL = "http://localhost:8080/api/timetable";
+const API_BASE_URL =
+  `${import.meta.env.VITE_API_BASE_URL || "http://localhost:8080"}/api/timetable`;
 
 export async function generateTimetable(requestData) {
   const response = await fetch(`${API_BASE_URL}/generate`, {
@@ -234,4 +235,4 @@ export async function saveTimetableConfig(config) {
   });
   if (!response.ok) throw new Error(`Failed to save config: ${response.status}`);
   return await response.json();
-}
+}
