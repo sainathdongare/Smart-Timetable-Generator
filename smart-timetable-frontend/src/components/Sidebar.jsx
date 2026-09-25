@@ -14,14 +14,16 @@ function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
-        <h2>Smart Timetable</h2>
-        <p>RIT Department of IT</p>
+        <Link to="/dashboard" style={{ textDecoration: "none", color: "inherit" }} title="Dashboard">
+          <h2>Smart Timetable</h2>
+          <p>RIT Department of IT</p>
+        </Link>
       </div>
 
       <nav className="sidebar-nav">
         <Link
-          to="/"
-          className={path === "/" ? "nav-active" : ""}
+          to="/dashboard"
+          className={path === "/dashboard" ? "nav-active" : ""}
         >
           🏠 Dashboard
         </Link>
@@ -70,6 +72,17 @@ function Sidebar() {
           }
         >
           ⚙️ Manage Department Inputs
+        </Link>
+
+        <div className="nav-section">PORTAL</div>
+
+        <Link
+          to="/"
+          className="sidebar-landing-link"
+          style={{ opacity: 0.8 }}
+          title="Back to SmartSched Welcome Page"
+        >
+          🌐 Welcome Page
         </Link>
       </nav>
     </aside>
