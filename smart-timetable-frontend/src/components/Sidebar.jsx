@@ -4,12 +4,17 @@ import "./Sidebar.css";
 // Crisp modern SVG vector icons
 function BrandIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="18" rx="3" />
-      <line x1="16" y1="2" x2="16" y2="6" />
-      <line x1="8" y1="2" x2="8" y2="6" />
-      <line x1="3" y1="10" x2="21" y2="10" />
-      <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" />
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="2.5" y="3.5" width="19" height="18" rx="3.5" fill="#ffffff" stroke="#bfdbfe" strokeWidth="1" />
+      <path d="M2.5 8C2.5 6.067 4.067 4.5 6 4.5H18C19.933 4.5 21.5 6.067 21.5 8V9H2.5V8Z" fill="#1d4ed8" />
+      <rect x="6.5" y="2" width="2" height="4" rx="1" fill="#ffffff" />
+      <rect x="15.5" y="2" width="2" height="4" rx="1" fill="#ffffff" />
+      <rect x="5.5" y="11.5" width="3.5" height="2.5" rx="0.75" fill="#2563eb" />
+      <rect x="10.25" y="11.5" width="3.5" height="2.5" rx="0.75" fill="#93c5fd" />
+      <rect x="15" y="11.5" width="3.5" height="2.5" rx="0.75" fill="#38bdf8" />
+      <rect x="5.5" y="15.5" width="3.5" height="2.5" rx="0.75" fill="#cbd5e1" />
+      <rect x="10.25" y="15.5" width="3.5" height="2.5" rx="0.75" fill="#1d4ed8" />
+      <rect x="15" y="15.5" width="3.5" height="2.5" rx="0.75" fill="#60a5fa" />
     </svg>
   );
 }

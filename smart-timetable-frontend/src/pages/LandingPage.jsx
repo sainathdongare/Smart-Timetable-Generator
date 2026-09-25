@@ -20,7 +20,20 @@ function LandingPage() {
       <header className="landing-header">
         <div className="landing-nav-container">
           <Link to="/" className="landing-logo">
-            <div className="landing-logo-icon">📅</div>
+            <div className="landing-logo-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="2.5" y="3.5" width="19" height="18" rx="3.5" fill="#ffffff" stroke="#bfdbfe" strokeWidth="1" />
+                <path d="M2.5 8C2.5 6.067 4.067 4.5 6 4.5H18C19.933 4.5 21.5 6.067 21.5 8V9H2.5V8Z" fill="#1d4ed8" />
+                <rect x="6.5" y="2" width="2" height="4" rx="1" fill="#ffffff" />
+                <rect x="15.5" y="2" width="2" height="4" rx="1" fill="#ffffff" />
+                <rect x="5.5" y="11.5" width="3.5" height="2.5" rx="0.75" fill="#2563eb" />
+                <rect x="10.25" y="11.5" width="3.5" height="2.5" rx="0.75" fill="#93c5fd" />
+                <rect x="15" y="11.5" width="3.5" height="2.5" rx="0.75" fill="#38bdf8" />
+                <rect x="5.5" y="15.5" width="3.5" height="2.5" rx="0.75" fill="#cbd5e1" />
+                <rect x="10.25" y="15.5" width="3.5" height="2.5" rx="0.75" fill="#1d4ed8" />
+                <rect x="15" y="15.5" width="3.5" height="2.5" rx="0.75" fill="#60a5fa" />
+              </svg>
+            </div>
             <div className="landing-logo-text">
               <span className="landing-brand-name">SmartSched</span>
               <span className="landing-brand-subtitle">Smart Timetable Generator</span>
