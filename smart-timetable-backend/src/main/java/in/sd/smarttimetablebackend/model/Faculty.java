@@ -12,6 +12,8 @@ public class Faculty {
     private String name;
     private String fullName;
     private int maxDailyLectures = 4;
+    private String designation = "Assistant Professor";
+    private String centralAuthority = "None";
 
     public Faculty() {
     }
@@ -27,6 +29,15 @@ public class Faculty {
         this.name = name;
         this.fullName = fullName;
         this.maxDailyLectures = maxDailyLectures;
+    }
+
+    public Faculty(Long id, String name, String fullName, int maxDailyLectures, String designation, String centralAuthority) {
+        this.id = id;
+        this.name = name;
+        this.fullName = fullName;
+        this.maxDailyLectures = maxDailyLectures;
+        this.designation = designation;
+        this.centralAuthority = centralAuthority;
     }
 
     public Long getId() {
@@ -60,4 +71,21 @@ public class Faculty {
     public void setMaxDailyLectures(int maxDailyLectures) {
         this.maxDailyLectures = maxDailyLectures;
     }
+
+    public String getDesignation() {
+        return designation != null && !designation.trim().isEmpty() ? designation : "Assistant Professor";
+    }
+
+    public void setDesignation(String designation) {
+        this.designation = designation;
+    }
+
+    public String getCentralAuthority() {
+        return centralAuthority != null && !centralAuthority.trim().isEmpty() ? centralAuthority : "None";
+    }
+
+    public void setCentralAuthority(String centralAuthority) {
+        this.centralAuthority = centralAuthority;
+    }
 }
+

@@ -8,20 +8,50 @@ import {
   deleteMasterTimetable
 } from "../api/timetableApi";
 import { ritDepartmentPreset } from "../data/ritDepartmentPreset";
+import {
+  exportPersonalTimetableToExcel,
+  exportClassTimetableToExcel,
+  exportMasterDepartmentToExcel
+} from "../utils/excelExport";
+
+export const FACULTY_DESIGNATIONS = [
+  "Professor",
+  "Associate Professor",
+  "Assistant Professor",
+  "Teaching Assistant",
+  "Lab Attendant"
+];
+
+export const CENTRAL_AUTHORITIES = [
+  "None",
+  "HOD",
+  "TPO",
+  "TPC"
+];
 
 function MasterTimetable() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialView = searchParams.get("view") || "ALL";
+  let rawView = searchParams.get("view") || "ALL";
+  if (rawView === "CLASS_MASTER") rawView = "ALL";
+  const initialView = rawView;
   const initialClass = searchParams.get("class") || "SY";
+  const initialLab = (searchParams.get("view") === "LAB_MASTER" || searchParams.get("lab") === "ALL") ? "ALL" : (searchParams.get("lab") || "ALL");
+  const initialRoom = searchParams.get("room") || "CR-27";
   const initialInputsOpen = searchParams.get("inputs") === "open";
   const initialInputTab = searchParams.get("tab") || "SY";
 
   const [masterData, setMasterData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [selectedView, setSelectedView] = useState(initialView); // "ALL", "CLASS", "FACULTY", "LAB"
+  const [selectedView, setSelectedView] = useState(initialView); // "ALL", "CLASS", "FACULTY", "FACULTY_MASTER", "LOAD_SHEET", "ROOM_MASTER", "ROOM", "LAB"
   const [selectedClassYear, setSelectedClassYear] = useState(initialClass); // "SY", "TY", "BTECH"
   const [selectedFaculty, setSelectedFaculty] = useState("SUM");
-  const [selectedLab, setSelectedLab] = useState("ALL"); // "ALL", "IL1", "IL2", "IL3", "IL4", "IL5", "IL6"
+  const [selectedLab, setSelectedLab] = useState(initialLab); // "ALL", "IL1", "IL2", "IL3", "IL4", "IL5", "IL6"
+  const [selectedRoom, setSelectedRoom] = useState(initialRoom); // "CR-27", "CR-26", "CR-212"
+  const [facultyMasterDay, setFacultyMasterDay] = useState("ALL"); // "ALL", "MONDAY", "TUESDAY", etc.
+  const [academicSession, setAcademicSession] = useState("2026-27");
+  const [academicSemester, setAcademicSemester] = useState("PART-I"); // "PART-I" (Odd) or "PART-II" (Even)
+  const [facultyPrintViewMode, setFacultyPrintViewMode] = useState("OFFICIAL"); // "OFFICIAL" (Exact RIT image layout) or "MODERN"
+  const [classPrintViewMode, setClassPrintViewMode] = useState("OFFICIAL"); // "OFFICIAL" (Exact RIT image layout) or "MODERN"
   const [conflictLog, setConflictLog] = useState([]);
   const [diagnostics, setDiagnostics] = useState([]);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -34,12 +64,24 @@ function MasterTimetable() {
 
   // Synchronize view and inputs when URL search params change
   useEffect(() => {
-    const v = searchParams.get("view");
-    if (v && v !== selectedView) setSelectedView(v);
+    let v = searchParams.get("view");
+    if (v === "CLASS_MASTER") {
+      if (selectedView !== "ALL") setSelectedView("ALL");
+    } else if (v === "LAB_MASTER") {
+      if (selectedView !== "LAB") setSelectedView("LAB");
+      if (selectedLab !== "ALL") setSelectedLab("ALL");
+    } else if (v && v !== selectedView) {
+      setSelectedView(v);
+    }
     const c = searchParams.get("class");
     if (c && c !== selectedClassYear) setSelectedClassYear(c);
+    const l = searchParams.get("lab");
+    if (l && l !== selectedLab) setSelectedLab(l);
+    const r = searchParams.get("room");
+    if (r && r !== selectedRoom) setSelectedRoom(r);
     const inp = searchParams.get("inputs");
     if (inp === "open") setShowInputManager(true);
+    else if (inp !== "open" && v) setShowInputManager(false);
     const tab = searchParams.get("tab");
     if (tab && tab !== activeInputTab) setActiveInputTab(tab);
 
@@ -112,6 +154,30 @@ function MasterTimetable() {
   const [newFacultyName, setNewFacultyName] = useState("");
   const [newFacultyFullName, setNewFacultyFullName] = useState("");
   const [newFacultyMaxLectures, setNewFacultyMaxLectures] = useState(4);
+  const [newFacultyDesignation, setNewFacultyDesignation] = useState("Assistant Professor");
+  const [newFacultyAuthority, setNewFacultyAuthority] = useState("None");
+
+  // New Year / Semester Setup Modal state
+  const [newYearModalOpen, setNewYearModalOpen] = useState(false);
+  const [newYearSetupSession, setNewYearSetupSession] = useState("2026-27");
+  const [newYearSetupSemester, setNewYearSetupSemester] = useState("PART-I");
+  const [newYearSetupScope, setNewYearSetupScope] = useState("ALL"); // "ALL", "SY", "TY", "BTECH"
+  const [customSessionInput, setCustomSessionInput] = useState("");
+  const [showCustomSessionField, setShowCustomSessionField] = useState(false);
+  const [availableSessions, setAvailableSessions] = useState(() => {
+    try {
+      const saved = localStorage.getItem("rit_available_sessions");
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return ["2026-27", "2025-26", "2024-25", "2023-24"];
+  });
+
+  // Save state
+  const [lastSavedTime, setLastSavedTime] = useState(() => {
+    return localStorage.getItem("rit_last_saved_time") || null;
+  });
+  const [saveStatusMessage, setSaveStatusMessage] = useState(null); // { type: 'success'|'info'|'error', text: '' }
+  const [resetModalOpen, setResetModalOpen] = useState(false);
 
   // Faculty Reassignment & Safe Deletion state
   const [reassignSource, setReassignSource] = useState("");
@@ -122,6 +188,17 @@ function MasterTimetable() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [facultyToDelete, setFacultyToDelete] = useState(null);
   const [deleteReplacement, setDeleteReplacement] = useState("");
+
+  // Edit Faculty Details Modal state
+  const [editingFacultyModal, setEditingFacultyModal] = useState({
+    isOpen: false,
+    originalCode: "",
+    name: "",
+    fullName: "",
+    designation: "Assistant Professor",
+    centralAuthority: "None",
+    maxDailyLectures: 4
+  });
 
   const [newRoomName, setNewRoomName] = useState("");
   const [newRoomType, setNewRoomType] = useState("THEORY");
@@ -164,7 +241,7 @@ function MasterTimetable() {
   const [newExtType, setNewExtType] = useState("FY-EEDP");
   const [newExtFaculty, setNewExtFaculty] = useState("");
   const [newExtDay, setNewExtDay] = useState("MONDAY");
-  const [newExtPeriod, setNewExtPeriod] = useState(1);
+  const [newExtPeriod, setNewExtPeriod] = useState("P1-P2");
   const [newExtDesc, setNewExtDesc] = useState("");
 
   // Faculty Unavailability / Leaves state
@@ -216,6 +293,37 @@ function MasterTimetable() {
     return Array.from(set);
   };
 
+  // Helper to extract periods array from an external load entry (supports 2-hr slots and 1-hr slots)
+  const getExternalLoadPeriods = (ext) => {
+    if (!ext) return [];
+    if (Array.isArray(ext.periods) && ext.periods.length > 0) return ext.periods.map(Number);
+    const k = String(ext.slotKey || ext.period || "").toUpperCase();
+    if (k === "P1-P2" || (k.includes("10") && k.includes("12"))) return [1, 2];
+    if (k === "P3-P4" || k.includes("12.45") || k.includes("12:45") || k.includes("2.45")) return [3, 4];
+    if (k === "P5-P6" || (k.includes("3") && k.includes("5"))) return [5, 6];
+    if (ext.period && ext.period2) return [Number(ext.period), Number(ext.period2)];
+    if (ext.period) {
+      const p = Number(ext.period);
+      return isNaN(p) ? [1] : [p];
+    }
+    return [1];
+  };
+
+  // Helper to format slot display for external load
+  const formatExternalLoadSlot = (ext) => {
+    if (!ext) return "";
+    const pList = getExternalLoadPeriods(ext);
+    if (pList.length === 2) {
+      if (pList[0] === 1 && pList[1] === 2) return "10:00 AM - 12:00 PM (P1-P2: 2h)";
+      if (pList[0] === 3 && pList[1] === 4) return "12:45 PM - 02:45 PM (P3-P4: 2h)";
+      if (pList[0] === 5 && pList[1] === 6) return "03:00 PM - 05:00 PM (P5-P6: 2h)";
+      return `P${pList[0]}-P${pList[1]} (2h)`;
+    }
+    const p = pList[0] || Number(ext.period) || 1;
+    const timing = periodTimings && periodTimings[p - 1] ? ` (${periodTimings[p - 1]})` : "";
+    return `Period ${p}${timing}`;
+  };
+
   // Helper to normalize externalLoads to Map format { "FY-EEDP": [], "FY-PPS": [], "FY-PCC": [] }
   const toExternalLoadsMap = (raw) => {
     const defaultMap = { "FY-EEDP": [], "FY-PPS": [], "FY-PCC": [] };
@@ -250,13 +358,14 @@ function MasterTimetable() {
         // 1. Audit External University FY Loads
         for (const [extType, loadList] of Object.entries(normExtLoads)) {
           if (!Array.isArray(loadList)) continue;
-          const match = loadList.find((ext) => ext.day === day && Number(ext.period) === period);
+          const match = loadList.find((ext) => ext.day === day && getExternalLoadPeriods(ext).includes(period));
           if (match && match.facultyCode) {
             const cleanF = match.facultyCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
             if (cleanF) {
               const list = facultyAssignments.get(cleanF) || [];
+              const durNote = getExternalLoadPeriods(match).length > 1 ? "2h FY slot" : "FY load";
               list.push({
-                source: `External ${extType} (${match.description || "FY Load"})`,
+                source: `External ${extType} (${match.description || durNote})`,
                 year: "FY",
                 faculty: match.facultyCode,
                 course: extType
@@ -632,13 +741,49 @@ function MasterTimetable() {
       return;
     }
 
+    const totalSubjects = (dataToSend?.yearData?.SY?.subjects?.length || 0) +
+                          (dataToSend?.yearData?.TY?.subjects?.length || 0) +
+                          (dataToSend?.yearData?.BTECH?.subjects?.length || 0);
+    if (totalSubjects === 0 && (dataToSend?.faculties?.length || 0) === 0) {
+      alert("Department configuration is currently blank. Please add faculty members and subjects before generating a timetable.");
+      return;
+    }
+
     setLoading(true);
     try {
-      const res = await generateMasterTimetable(dataToSend);
+      const payloadToSend = JSON.parse(JSON.stringify(dataToSend));
+      if (Array.isArray(payloadToSend.externalLoads)) {
+        const flattenedExt = [];
+        payloadToSend.externalLoads.forEach((ext) => {
+          const pList = getExternalLoadPeriods(ext);
+          if (pList.length > 1) {
+            pList.forEach((p) => {
+              flattenedExt.push({
+                loadType: ext.loadType,
+                facultyCode: ext.facultyCode,
+                day: ext.day,
+                period: p,
+                description: ext.description
+              });
+            });
+          } else {
+            flattenedExt.push({
+              loadType: ext.loadType,
+              facultyCode: ext.facultyCode,
+              day: ext.day,
+              period: pList[0] || Number(ext.period) || 1,
+              description: ext.description
+            });
+          }
+        });
+        payloadToSend.externalLoads = flattenedExt;
+      }
+
+      const res = await generateMasterTimetable(payloadToSend);
       // Run live audit to verify constraints against the generated schedules
       const { liveDiagnostics, liveConflicts } = computeLiveDiagnostics(
         res.schedules,
-        res.externalLoads,
+        dataToSend.externalLoads || res.externalLoads,
         dataToSend.facultyUnavailability
       );
       res.diagnostics = liveDiagnostics;
@@ -676,6 +821,317 @@ function MasterTimetable() {
     setSwapHistory([]);
     setHasManualAdjustments(false);
     handleGenerate(clone, true);
+  };
+
+  const handleResetToBlank = () => {
+    const isConfirmed = window.confirm(
+      "⚠️ Erase All Department Inputs?\n\nThis will clear all faculties, theory subjects, lab courses, practicals, fixed slots, external loads, and off-slots, allowing you to start fresh and enter brand new data from scratch.\n\nAre you sure you want to proceed?"
+    );
+    if (!isConfirmed) return;
+
+    const blankPayload = {
+      version: "BLANK-FRESH",
+      config: {
+        year: "",
+        branch: "IT",
+        workingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+        periodsPerDay: 6,
+        periodTimings: [
+          "10:00 To 11:00",
+          "11:00 To 12:00",
+          "12:45 To 01:45",
+          "01:45 To 02:45",
+          "03:00 To 04:00",
+          "04:00 To 05:00"
+        ]
+      },
+      faculties: [],
+      rooms: [
+        { id: 1, name: "CR-27", type: "THEORY", defaultForYear: "SY" },
+        { id: 2, name: "CR-26", type: "THEORY", defaultForYear: "TY" },
+        { id: 3, name: "CR-212", type: "THEORY", defaultForYear: "BTECH" },
+        { id: 4, name: "IL1", type: "LAB" },
+        { id: 5, name: "IL2", type: "LAB" },
+        { id: 6, name: "IL3", type: "LAB" },
+        { id: 7, name: "IL4", type: "LAB" },
+        { id: 8, name: "IL5", type: "LAB" },
+        { id: 9, name: "IL6", type: "LAB" }
+      ],
+      classroomMapping: {
+        SY: "CR-27",
+        TY: "CR-26",
+        BTECH: "CR-212"
+      },
+      externalLoads: [],
+      facultyUnavailability: [],
+      yearData: {
+        SY: {
+          year: "SY",
+          branch: "IT",
+          defaultRoom: "CR-27",
+          subjects: [],
+          fixedSlots: [],
+          labCourses: [],
+          practicals: []
+        },
+        TY: {
+          year: "TY",
+          branch: "IT",
+          defaultRoom: "CR-26",
+          subjects: [],
+          fixedSlots: [],
+          labCourses: [],
+          practicals: []
+        },
+        BTECH: {
+          year: "BTECH",
+          branch: "IT",
+          defaultRoom: "CR-212",
+          subjects: [],
+          fixedSlots: [],
+          labCourses: [],
+          practicals: []
+        }
+      }
+    };
+
+    setInputs(blankPayload);
+    localStorage.setItem("customMasterPayload", JSON.stringify(blankPayload));
+    localStorage.removeItem("timetableSwapHistory");
+    localStorage.setItem("timetableHasManualAdjustments", "false");
+    setSwapHistory([]);
+    setHasManualAdjustments(false);
+
+    // Build empty timetable grid
+    const emptySchedules = { SY: [], TY: [], BTECH: [] };
+    days.forEach((day) => {
+      periods.forEach((period) => {
+        ["SY", "TY", "BTECH"].forEach((yr) => {
+          emptySchedules[yr].push({
+            day,
+            period,
+            course: "—",
+            faculty: "",
+            location: "",
+            type: "EMPTY",
+            subEntries: []
+          });
+        });
+      });
+    });
+
+    const emptyMaster = {
+      schedules: emptySchedules,
+      externalLoads: {},
+      totalContactHours: { SY: 0, TY: 0, BTECH: 0 },
+      conflictLog: [],
+      diagnostics: []
+    };
+    setMasterData(emptyMaster);
+    setOriginalSchedules(JSON.parse(JSON.stringify(emptySchedules)));
+    localStorage.setItem("masterTimetableData", JSON.stringify(emptyMaster));
+    setConflictLog([]);
+    setDiagnostics([]);
+    setSwapSource(null);
+    setSwapHover(null);
+    setSelectedFaculty("");
+
+    setSwapAlert({
+      type: "success",
+      text: "🧹 All department inputs erased! You now have a blank timetable and can enter fresh data."
+    });
+  };
+
+  // Setup New Academic Year / Semester: Import Faculty, Courses, Classrooms & Labs from benchmark, clear allotments
+  const handleExecuteNewYearSetup = (scopeOverride = null, sessionOverride = null, semesterOverride = null) => {
+    const scope = scopeOverride || newYearSetupScope;
+    let finalSession = sessionOverride || newYearSetupSession;
+    if (showCustomSessionField && customSessionInput.trim()) {
+      finalSession = customSessionInput.trim();
+      if (!availableSessions.includes(finalSession)) {
+        const nextSessions = [finalSession, ...availableSessions];
+        setAvailableSessions(nextSessions);
+        localStorage.setItem("rit_available_sessions", JSON.stringify(nextSessions));
+      }
+    }
+    const finalSemester = semesterOverride || newYearSetupSemester;
+
+    const source = (inputs?.faculties && inputs.faculties.length > 0) ? inputs : ritDepartmentPreset;
+
+    // 1. Keep Faculty Details (codes, full names, designations, central roles, daily caps)
+    const cleanFaculties = (source.faculties || []).map((f) => ({
+      id: f.id || Date.now(),
+      name: f.name,
+      fullName: f.fullName || f.name,
+      designation: f.designation || "Assistant Professor",
+      centralAuthority: f.centralAuthority || "None",
+      maxDailyLectures: f.maxDailyLectures || 4
+    }));
+
+    // 2. Keep Rooms & Labs
+    const cleanRooms = (source.rooms || ritDepartmentPreset.rooms || []).map((r) => ({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      defaultForYear: r.defaultForYear
+    }));
+
+    // 3. Keep courses, classrooms and lab structures, but CLEAR teacher allotments for new semester
+    const cleanYearData = {};
+    ["SY", "TY", "BTECH"].forEach((yr) => {
+      const yrSource = source.yearData?.[yr] || ritDepartmentPreset.yearData?.[yr];
+      if (!yrSource) return;
+
+      const shouldCleanThisYear = (scope === "ALL" || scope === yr);
+
+      if (shouldCleanThisYear) {
+        // Theory subjects: keep code, name, weekly periods, but clear assigned faculty
+        const cleanSubjects = (yrSource.subjects || []).map((sub) => ({
+          id: sub.id,
+          code: sub.code,
+          name: sub.name,
+          type: sub.type || "THEORY",
+          weeklyPeriods: Number(sub.weeklyPeriods) || 3,
+          faculty: null // Cleared for fresh semester allocation
+        }));
+
+        // Lab courses: keep code, name, preferredRoom, batches, but clear assigned faculties
+        const cleanLabCourses = (yrSource.labCourses || []).map((lc) => ({
+          code: lc.code,
+          name: lc.name,
+          preferredRoom: lc.preferredRoom,
+          faculty: "",
+          faculties: [],
+          batchFacultyMap: {}
+        }));
+
+        // Practicals template: keep day, period, batch, practical, room, but clear faculty
+        const cleanPracticals = (yrSource.practicals || []).map((pr) => ({
+          day: pr.day,
+          period: pr.period,
+          batch: pr.batch,
+          practical: pr.practical,
+          room: pr.room,
+          faculty: "" // Cleared for fresh semester allocation
+        }));
+
+        cleanYearData[yr] = {
+          year: yrSource.year || yr,
+          branch: yrSource.branch || "IT",
+          defaultRoom: yrSource.defaultRoom || (yr === "SY" ? "CR-27" : (yr === "TY" ? "CR-26" : "CR-212")),
+          classroom: yrSource.classroom || (yr === "SY" ? "CR-27" : (yr === "TY" ? "CR-26" : "CR-212")),
+          classCoordinator: yrSource.classCoordinator || "",
+          subjects: cleanSubjects,
+          labCourses: cleanLabCourses,
+          practicals: cleanPracticals,
+          fixedSlots: []
+        };
+      } else {
+        cleanYearData[yr] = JSON.parse(JSON.stringify(yrSource));
+      }
+    });
+
+    const cleanPayload = {
+      version: `${finalSession}-${finalSemester}-CONFIG`,
+      config: {
+        year: "",
+        branch: "IT",
+        workingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+        periodsPerDay: 6,
+        periodTimings: periodTimings || ritDepartmentPreset.config.periodTimings
+      },
+      faculties: cleanFaculties,
+      rooms: cleanRooms,
+      yearData: cleanYearData,
+      facultyUnavailability: [],
+      externalLoads: []
+    };
+
+    setInputs(cleanPayload);
+    localStorage.setItem("customMasterPayload", JSON.stringify(cleanPayload));
+    localStorage.setItem(`payload_${finalSession}_${finalSemester}`, JSON.stringify(cleanPayload));
+
+    setAcademicSession(finalSession);
+    setAcademicSemester(finalSemester);
+
+    // Clear old schedules & swap history
+    setMasterData(null);
+    localStorage.removeItem("timetableSwapHistory");
+    localStorage.setItem("timetableHasManualAdjustments", "false");
+    setSwapHistory([]);
+    setHasManualAdjustments(false);
+    setConflictLog([]);
+    setDiagnostics([]);
+
+    setNewYearModalOpen(false);
+    setShowCustomSessionField(false);
+    setCustomSessionInput("");
+
+    // Open drawer to the target year tab
+    setIsInputsDrawerOpen(true);
+    if (scope === "SY") setActiveInputTab("SY");
+    else if (scope === "TY") setActiveInputTab("TY");
+    else if (scope === "BTECH") setActiveInputTab("BTECH");
+    else setActiveInputTab("SY");
+
+    const scopeText = scope === "ALL" ? "All 3 Years (SY, TY, BTech)" : (scope === "SY" ? "Second Year (S.E.)" : (scope === "TY" ? "Third Year (T.E.)" : "Final Year"));
+    setSwapAlert({
+      type: "success",
+      text: `✨ Successfully configured for ${finalSession} / ${finalSemester}! Imported Faculty details, Courses, Classrooms & Labs for ${scopeText}. Previous teacher allotments are cleared so you can allot subjects fresh and calculate load.`
+    });
+  };
+
+  // Reset teacher allocations for a single year (e.g. SY / SE)
+  const handleResetYearFacultyAllotments = (yearKey) => {
+    const yearLabel = yearKey === "SY" ? "Second Year (S.E. / S.Y.)" : (yearKey === "TY" ? "Third Year (T.E. / T.Y.)" : "Final Year (B.Tech)");
+    const isConfirmed = window.confirm(
+      `Clear Faculty Allotments for ${yearLabel}?\n\n` +
+      `✓ All Courses, weekly lecture hours, practical labs, batches, and classroom (CR-${yearKey === "SY" ? "27" : (yearKey === "TY" ? "26" : "212")}) will be KEPT.\n` +
+      `✗ Assigned faculty on ${yearLabel} theory & lab courses will be CLEARED to unassigned.\n\n` +
+      `This allows you to allot subjects and faculties fresh for that semester and calculate load accurately.\n\nAre you sure?`
+    );
+    if (!isConfirmed) return;
+
+    const yrSource = inputs.yearData?.[yearKey];
+    if (!yrSource) return;
+
+    const cleanSubjects = (yrSource.subjects || []).map((sub) => ({
+      ...sub,
+      faculty: null
+    }));
+
+    const cleanLabCourses = (yrSource.labCourses || []).map((lc) => ({
+      ...lc,
+      faculty: "",
+      faculties: [],
+      batchFacultyMap: {}
+    }));
+
+    const cleanPracticals = (yrSource.practicals || []).map((pr) => ({
+      ...pr,
+      faculty: ""
+    }));
+
+    const updated = {
+      ...inputs,
+      yearData: {
+        ...inputs.yearData,
+        [yearKey]: {
+          ...yrSource,
+          subjects: cleanSubjects,
+          labCourses: cleanLabCourses,
+          practicals: cleanPracticals,
+          fixedSlots: []
+        }
+      }
+    };
+
+    setInputs(updated);
+    localStorage.setItem("customMasterPayload", JSON.stringify(updated));
+    setSwapAlert({
+      type: "success",
+      text: `✓ Cleared teacher allotments for ${yearLabel}. Courses & classroom preserved. You can now allot faculty below!`
+    });
   };
 
   // --- Database Persistence Handlers ---
@@ -837,11 +1293,14 @@ function MasterTimetable() {
 
     (inputs?.externalLoads || []).forEach((ext) => {
       if ((ext.facultyCode || "").trim().toUpperCase() === norm) {
+        const pList = getExternalLoadPeriods(ext);
         externalLoads.push({
           day: ext.day,
           period: ext.period,
+          periods: pList,
           loadType: ext.loadType,
-          description: ext.description
+          description: ext.description,
+          hours: pList.length
         });
       }
     });
@@ -849,7 +1308,7 @@ function MasterTimetable() {
     const totalTheoryHours = theorySubjects.reduce((sum, s) => sum + s.weeklyPeriods, 0);
     const totalLabHours = practicals.length > 0 ? practicals.length : (labCourses.length * 2);
     const totalFixedHours = fixedSlots.length;
-    const totalExternalHours = externalLoads.length;
+    const totalExternalHours = externalLoads.reduce((sum, ext) => sum + (ext.hours || 1), 0);
     const totalHours = totalTheoryHours + totalLabHours + totalFixedHours + totalExternalHours;
     const totalActiveCount = theorySubjects.length + labCourses.length + practicals.length + fixedSlots.length + externalLoads.length;
 
@@ -885,7 +1344,9 @@ function MasterTimetable() {
           id: Date.now(),
           name,
           fullName: newFacultyFullName.trim() || name,
-          maxDailyLectures: Number(newFacultyMaxLectures) || 4
+          maxDailyLectures: Number(newFacultyMaxLectures) || 4,
+          designation: newFacultyDesignation || "Assistant Professor",
+          centralAuthority: newFacultyAuthority || "None"
         }
       ]
     };
@@ -893,7 +1354,226 @@ function MasterTimetable() {
     localStorage.setItem("customMasterPayload", JSON.stringify(updated));
     setNewFacultyName("");
     setNewFacultyFullName("");
-    setReassignFeedback({ type: "success", text: `Faculty ${name} added successfully! Assign subjects to them below or transfer existing load.` });
+    setNewFacultyMaxLectures(4);
+    setNewFacultyDesignation("Assistant Professor");
+    setNewFacultyAuthority("None");
+    setReassignFeedback({
+      type: "success",
+      text: `Faculty ${name} (${newFacultyDesignation}${newFacultyAuthority !== "None" ? " - " + newFacultyAuthority : ""}) added successfully! Assign subjects to them below or transfer existing load.`
+    });
+  };
+
+  // Update existing faculty designation, authority, full name, or max lectures inline
+  const handleUpdateFaculty = (facultyCode, field, value) => {
+    const updatedFaculties = (inputs.faculties || []).map((f) => {
+      if (f.name === facultyCode) {
+        return { ...f, [field]: value };
+      }
+      return f;
+    });
+    const updated = { ...inputs, faculties: updatedFaculties };
+    setInputs(updated);
+    localStorage.setItem("customMasterPayload", JSON.stringify(updated));
+  };
+
+  // Open Edit Faculty Modal
+  const handleOpenEditFacultyModal = (faculty) => {
+    if (!faculty) return;
+    setEditingFacultyModal({
+      isOpen: true,
+      originalCode: faculty.name,
+      name: faculty.name,
+      fullName: faculty.fullName || faculty.name,
+      designation: faculty.designation || "Assistant Professor",
+      centralAuthority: faculty.centralAuthority || "None",
+      maxDailyLectures: faculty.maxDailyLectures || 4
+    });
+  };
+
+  // Save Faculty Details (Code, Full Name, Designation, Authority, Daily Cap) with automatic cascade
+  const handleSaveFacultyDetails = (e) => {
+    if (e) e.preventDefault();
+    const { originalCode, name, fullName, designation, centralAuthority, maxDailyLectures } = editingFacultyModal;
+    const cleanNewCode = (name || "").trim().toUpperCase();
+    const cleanOldCode = (originalCode || "").trim().toUpperCase();
+
+    if (!cleanNewCode) {
+      alert("Faculty Short Code cannot be empty.");
+      return;
+    }
+
+    // Check if new code conflicts with another faculty
+    if (cleanNewCode !== cleanOldCode) {
+      const exists = (inputs.faculties || []).some((f) => f.name.toUpperCase() === cleanNewCode);
+      if (exists) {
+        alert(`A faculty with code "${cleanNewCode}" already exists. Please choose a unique code.`);
+        return;
+      }
+    }
+
+    // Clone inputs
+    const updatedInputs = JSON.parse(JSON.stringify(inputs));
+
+    // 1. Update faculties list
+    updatedInputs.faculties = (updatedInputs.faculties || []).map((f) => {
+      if (f.name.toUpperCase() === cleanOldCode) {
+        return {
+          ...f,
+          name: cleanNewCode,
+          fullName: (fullName || cleanNewCode).trim(),
+          designation: designation || "Assistant Professor",
+          centralAuthority: centralAuthority || "None",
+          maxDailyLectures: Number(maxDailyLectures) || 4
+        };
+      }
+      return f;
+    });
+
+    // 2. If code changed, cascade update across all courses, practicals, labs, and fixed slots
+    if (cleanNewCode !== cleanOldCode) {
+      const yearKeys = ["SY", "TY", "BTECH"];
+      yearKeys.forEach((yr) => {
+        const yData = updatedInputs.yearData?.[yr];
+        if (!yData) return;
+
+        // Theory courses
+        if (yData.subjects) {
+          yData.subjects.forEach((s) => {
+            if (s.faculty && s.faculty.trim().toUpperCase() === cleanOldCode) {
+              s.faculty = cleanNewCode;
+            }
+          });
+        }
+
+        // Lab courses
+        if (yData.labCourses) {
+          yData.labCourses.forEach((lc) => {
+            if (lc.faculty && lc.faculty.trim().toUpperCase() === cleanOldCode) {
+              lc.faculty = cleanNewCode;
+            }
+            if (Array.isArray(lc.faculties)) {
+              lc.faculties = lc.faculties.map((f) => (f.trim().toUpperCase() === cleanOldCode ? cleanNewCode : f));
+            }
+            if (lc.batchFacultyMap) {
+              Object.keys(lc.batchFacultyMap).forEach((b) => {
+                if (lc.batchFacultyMap[b] && lc.batchFacultyMap[b].trim().toUpperCase() === cleanOldCode) {
+                  lc.batchFacultyMap[b] = cleanNewCode;
+                }
+              });
+            }
+          });
+        }
+
+        // Practicals
+        if (yData.practicals) {
+          yData.practicals.forEach((pr) => {
+            if (pr.faculty && pr.faculty.trim().toUpperCase() === cleanOldCode) {
+              pr.faculty = cleanNewCode;
+            }
+          });
+        }
+
+        // Fixed slots
+        if (yData.fixedSlots) {
+          yData.fixedSlots.forEach((fs) => {
+            if (fs.facultyName && fs.facultyName.trim().toUpperCase() === cleanOldCode) {
+              fs.facultyName = cleanNewCode;
+            }
+          });
+        }
+      });
+
+      // Faculty Unavailability
+      if (updatedInputs.facultyUnavailability) {
+        updatedInputs.facultyUnavailability.forEach((un) => {
+          if (un.facultyCode && un.facultyCode.trim().toUpperCase() === cleanOldCode) {
+            un.facultyCode = cleanNewCode;
+          }
+          if (un.faculty?.name && un.faculty.name.trim().toUpperCase() === cleanOldCode) {
+            un.faculty.name = cleanNewCode;
+          }
+        });
+      }
+
+      // External loads
+      if (updatedInputs.externalLoads) {
+        updatedInputs.externalLoads.forEach((ext) => {
+          if (ext.facultyCode && ext.facultyCode.trim().toUpperCase() === cleanOldCode) {
+            ext.facultyCode = cleanNewCode;
+          }
+        });
+      }
+
+      // 3. Update masterData schedules if generated
+      if (masterData && masterData.schedules) {
+        const updatedMaster = JSON.parse(JSON.stringify(masterData));
+        yearKeys.forEach((yr) => {
+          const classList = updatedMaster.schedules?.[yr];
+          if (!classList) return;
+          classList.forEach((cell) => {
+            if (cell.faculty) {
+              const parts = cell.faculty.split(/([/,\s]+)/);
+              cell.faculty = parts
+                .map((p) => (p.trim().toUpperCase() === cleanOldCode ? cleanNewCode : p))
+                .join("");
+            }
+            if (cell.subEntries && cell.subEntries.length > 0) {
+              cell.subEntries.forEach((sub) => {
+                if (sub.faculty) {
+                  const subParts = sub.faculty.split(/([/,\s]+)/);
+                  sub.faculty = subParts
+                    .map((p) => (p.trim().toUpperCase() === cleanOldCode ? cleanNewCode : p))
+                    .join("");
+                }
+              });
+              const allFacs = Array.from(new Set(cell.subEntries.map((s) => s.faculty).filter(Boolean)));
+              cell.faculty = allFacs.join(", ");
+            }
+          });
+        });
+
+        // External loads in masterData
+        if (updatedMaster.externalLoads) {
+          const extMap = toExternalLoadsMap(updatedMaster.externalLoads);
+          Object.keys(extMap).forEach((key) => {
+            if (Array.isArray(extMap[key])) {
+              extMap[key].forEach((item) => {
+                if (item.facultyCode && item.facultyCode.trim().toUpperCase() === cleanOldCode) {
+                  item.facultyCode = cleanNewCode;
+                }
+              });
+            }
+          });
+          updatedMaster.externalLoads = extMap;
+        }
+
+        setMasterData(updatedMaster);
+        localStorage.setItem("masterTimetableData", JSON.stringify(updatedMaster));
+      }
+
+      // If selectedFaculty in Faculty view was oldCode, update it
+      if (selectedFaculty && selectedFaculty.trim().toUpperCase() === cleanOldCode) {
+        setSelectedFaculty(cleanNewCode);
+      }
+    }
+
+    setInputs(updatedInputs);
+    localStorage.setItem("customMasterPayload", JSON.stringify(updatedInputs));
+
+    setEditingFacultyModal({
+      isOpen: false,
+      originalCode: "",
+      name: "",
+      fullName: "",
+      designation: "Assistant Professor",
+      centralAuthority: "None",
+      maxDailyLectures: 4
+    });
+
+    setReassignFeedback({
+      type: "success",
+      text: `✓ Faculty details for "${cleanNewCode}" updated successfully!`
+    });
   };
 
   // 1-Click Reassign & Replace Faculty Across Entire Timetable
@@ -1145,7 +1825,7 @@ function MasterTimetable() {
 
     const current = { ...currentSubjects[index] };
     if (field === "faculty") {
-      const facultyObj = inputs.faculties.find((f) => f.name === value) || { name: value };
+      const facultyObj = value ? (inputs.faculties.find((f) => f.name === value) || { name: value }) : null;
       current.faculty = facultyObj;
     } else if (field === "weeklyPeriods") {
       current.weeklyPeriods = Math.max(1, parseInt(value, 10) || 1);
@@ -1156,7 +1836,7 @@ function MasterTimetable() {
     }
     currentSubjects[index] = current;
 
-    setInputs({
+    const updated = {
       ...inputs,
       yearData: {
         ...inputs.yearData,
@@ -1165,7 +1845,9 @@ function MasterTimetable() {
           subjects: currentSubjects
         }
       }
-    });
+    };
+    setInputs(updated);
+    localStorage.setItem("customMasterPayload", JSON.stringify(updated));
   };
 
   const handleDeleteSubjectByIndex = (yearKey, index) => {
@@ -1410,11 +2092,11 @@ function MasterTimetable() {
     const isTeacherOccupiedElsewhere = (teacher, day, p1, p2) => {
       if (!teacher) return false;
       const tNorm = teacher.trim().toUpperCase();
-      // 1. Check external loads
+      // 1. Check external loads (supporting 2-hour and 1-hour slots)
       const extMatch = (inputs.externalLoads || []).some(
         (ext) => (ext.facultyCode || "").trim().toUpperCase() === tNorm &&
           ext.day?.toUpperCase() === day.toUpperCase() &&
-          (Number(ext.period) === p1 || Number(ext.period) === p2)
+          getExternalLoadPeriods(ext).some((p) => p === p1 || p === p2)
       );
       if (extMatch) return true;
       // 2. Check fixed slots across all classes
@@ -1435,7 +2117,7 @@ function MasterTimetable() {
     const usedDays = new Set();
     const clashSubstitutions = [];
 
-    // For each lab course cIdx, find a distinct day with an available 2-hour block
+    // For each lab course cIdx, find a distinct day with an available 2-hour block (4 courses -> 4 days, 2 courses -> 2 days)
     for (let cIdx = 0; cIdx < numCourses; cIdx++) {
       let assignedDay = null;
       let assignedBlock = null;
@@ -1453,9 +2135,10 @@ function MasterTimetable() {
         if (assignedDay) break;
       }
 
-      // Fallback: search any day with a free 2-hour block
+      // Fallback: search any remaining day first with a free 2-hour block
       if (!assignedDay) {
         for (const day of availableDays) {
+          if (usedDays.size < availableDays.length && usedDays.has(day)) continue;
           for (const blk of candidateBlocks) {
             if (!isSlotBlockedByFixed(day, blk.p1) && !isSlotBlockedByFixed(day, blk.p2)) {
               assignedDay = day;
@@ -1749,11 +2432,21 @@ function MasterTimetable() {
       alert("Please select faculty code.");
       return;
     }
+    let pList = [1];
+    if (newExtPeriod === "P1-P2") pList = [1, 2];
+    else if (newExtPeriod === "P3-P4") pList = [3, 4];
+    else if (newExtPeriod === "P5-P6") pList = [5, 6];
+    else pList = [Number(newExtPeriod) || 1];
+
     const extObj = {
       loadType: newExtType,
       facultyCode: newExtFaculty,
       day: newExtDay,
-      period: Number(newExtPeriod),
+      period: pList[0],
+      period2: pList[1] || null,
+      periods: pList,
+      slotKey: String(newExtPeriod),
+      hours: pList.length,
       description: newExtDesc.trim() || `${newExtFaculty}-${newExtType}`
     };
     const currentLoads = inputs.externalLoads || [];
@@ -1867,6 +2560,124 @@ function MasterTimetable() {
     };
     reader.readAsText(file);
     e.target.value = null;
+  };
+
+  // =========================================================================
+  // SAVE SYSTEM (PERSIST ALL DEPARTMENT DATA & TIMETABLES)
+  // =========================================================================
+  const handleSaveAllData = (silent = false) => {
+    try {
+      const now = new Date();
+      const formattedDate = now.toLocaleString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true
+      });
+
+      // 1. Save all department inputs (faculties, rooms, yearData for SY, TY, BTECH, fixed slots, FY external loads, unavailabilities)
+      localStorage.setItem("customMasterPayload", JSON.stringify(inputs));
+
+      // 2. Save master generated timetable if available
+      if (masterData) {
+        localStorage.setItem("masterTimetableData", JSON.stringify(masterData));
+      }
+
+      // 3. Save period swap history and adjustment flags
+      localStorage.setItem("timetableSwapHistory", JSON.stringify(swapHistory || []));
+      localStorage.setItem("timetableHasManualAdjustments", hasManualAdjustments ? "true" : "false");
+
+      // 4. Save timestamp
+      localStorage.setItem("rit_last_saved_time", formattedDate);
+      setLastSavedTime(formattedDate);
+
+      // 5. Sync to backend database if timetable is generated
+      if (masterData) {
+        try {
+          saveMasterTimetable(masterData, `Department Timetable Saved (${formattedDate})`).catch(() => {});
+        } catch (e) {}
+      }
+
+      setSaveStatusMessage({
+        type: "success",
+        text: `💾 All department data, faculty allotments, and timetables successfully saved at ${formattedDate}!`
+      });
+      setTimeout(() => setSaveStatusMessage(null), 6000);
+
+      if (!silent) {
+        setSwapAlert({
+          type: "success",
+          text: `✓ All changes successfully saved! (${formattedDate})`
+        });
+      }
+    } catch (err) {
+      console.error("Save error:", err);
+      alert("Failed to save: " + err.message);
+    }
+  };
+
+  const handleReloadSavedData = () => {
+    const savedInputs = localStorage.getItem("customMasterPayload");
+    if (!savedInputs) {
+      alert("No previously saved data found in your browser.");
+      return;
+    }
+    if (!window.confirm("Reload data from your last saved point?\n\nThis will restore all faculty allotments, courses, rooms, and schedule states from the last saved state.")) {
+      return;
+    }
+
+    try {
+      // 1. Restore inputs
+      const parsedInputs = JSON.parse(savedInputs);
+      setInputs(parsedInputs);
+
+      // 2. Restore master data
+      const savedMaster = localStorage.getItem("masterTimetableData");
+      if (savedMaster) {
+        const parsedMaster = JSON.parse(savedMaster);
+        if (parsedMaster.externalLoads) {
+          parsedMaster.externalLoads = toExternalLoadsMap(parsedMaster.externalLoads);
+        }
+        const { liveDiagnostics, liveConflicts } = computeLiveDiagnostics(
+          parsedMaster.schedules,
+          parsedMaster.externalLoads,
+          parsedInputs.facultyUnavailability
+        );
+        parsedMaster.diagnostics = liveDiagnostics;
+        parsedMaster.conflictLog = liveConflicts;
+        setMasterData(parsedMaster);
+        setOriginalSchedules(JSON.parse(JSON.stringify(parsedMaster.schedules || {})));
+        setConflictLog(liveConflicts);
+        setDiagnostics(liveDiagnostics);
+      }
+
+      // 3. Restore swaps
+      const savedSwaps = localStorage.getItem("timetableSwapHistory");
+      if (savedSwaps) {
+        setSwapHistory(JSON.parse(savedSwaps));
+      }
+      const hasAdj = localStorage.getItem("timetableHasManualAdjustments") === "true";
+      setHasManualAdjustments(hasAdj);
+
+      const savedTime = localStorage.getItem("rit_last_saved_time");
+      if (savedTime) setLastSavedTime(savedTime);
+
+      setSaveStatusMessage({
+        type: "success",
+        text: `✓ Successfully reloaded all data from last saved point (${savedTime || "Saved State"})!`
+      });
+      setTimeout(() => setSaveStatusMessage(null), 5000);
+      setSwapAlert({
+        type: "success",
+        text: `✓ Reloaded all data from last saved point!`
+      });
+    } catch (err) {
+      console.error("Reload error:", err);
+      alert("Failed to reload saved data: " + err.message);
+    }
   };
 
   // Check if a faculty is busy at a given slot outside of a specified class
@@ -3242,6 +4053,38 @@ function MasterTimetable() {
     return "Department Coordinator";
   };
 
+  const getSemesterForYear = (yr, semTerm = academicSemester) => {
+    if (semTerm === "PART-I") {
+      if (yr === "SY") return "Semester III";
+      if (yr === "TY") return "Semester V";
+      if (yr === "BTECH") return "Semester VII";
+    } else {
+      if (yr === "SY") return "Semester IV";
+      if (yr === "TY") return "Semester VI";
+      if (yr === "BTECH") return "Semester VIII";
+    }
+    return "Semester III";
+  };
+
+  const handleExportCurrentClassExcel = (targetYear = selectedClassYear) => {
+    const semName = getSemesterForYear(targetYear, academicSemester);
+    const yrData = inputs?.yearData?.[targetYear];
+    const sched = masterData?.schedules?.[targetYear] || [];
+    const coord = getClassCoordinator(targetYear);
+    exportClassTimetableToExcel({
+      year: targetYear,
+      semester: semName,
+      academicSession,
+      academicSemester,
+      classroom: getClassroom(targetYear),
+      coordinator: coord,
+      schedule: sched,
+      subjects: yrData?.subjects || [],
+      practicals: yrData?.practicals || [],
+      fixedSlots: yrData?.fixedSlots || []
+    });
+  };
+
   const computeFacultySchedule = (facultyCode) => {
     if (!masterData || !facultyCode) {
       return {
@@ -3328,7 +4171,7 @@ function MasterTimetable() {
           for (const [loadType, list] of Object.entries(extMap)) {
             if (!Array.isArray(list)) continue;
             const extMatch = list.find(
-              (e) => e.day === day && e.period === period && e.facultyCode === facultyCode
+              (e) => e.day === day && getExternalLoadPeriods(e).includes(period) && e.facultyCode === facultyCode
             );
             if (extMatch) {
               entry = {
@@ -3503,6 +4346,560 @@ function MasterTimetable() {
     return { labStats, matrix };
   };
 
+  const getAllClassrooms = () => {
+    return [
+      { code: getClassroom("SY"), year: "SY", label: `S.Y. B.Tech Lecture Hall (${getClassroom("SY")})` },
+      { code: getClassroom("TY"), year: "TY", label: `T.Y. B.Tech Lecture Hall (${getClassroom("TY")})` },
+      { code: getClassroom("BTECH"), year: "BTECH", label: `Final Year B.Tech Lecture Hall (${getClassroom("BTECH")})` }
+    ];
+  };
+
+  const computeRoomSchedule = (targetRoom) => {
+    if (!masterData) {
+      return { grid: {}, stats: { totalOccupied: 0, totalCapacity: 30, utilizationPct: "0.0" }, sessions: [] };
+    }
+
+    const grid = {};
+    let totalOccupied = 0;
+    const sessions = [];
+
+    days.forEach((day) => {
+      grid[day] = {};
+      periods.forEach((period) => {
+        let entry = null;
+
+        for (const yr of ["SY", "TY", "BTECH"]) {
+          const cell = getCell(yr, day, period);
+          if (!cell || cell.course === "—") continue;
+
+          if (cell.location === targetRoom) {
+            entry = {
+              year: yr,
+              course: cell.course,
+              faculty: cell.faculty,
+              cellType: cell.cellType || "THEORY",
+              location: cell.location
+            };
+            totalOccupied++;
+            sessions.push({
+              day,
+              period,
+              year: yr,
+              course: cell.course,
+              faculty: cell.faculty,
+              cellType: cell.cellType || "THEORY"
+            });
+            break;
+          }
+
+          if (cell.subEntries && cell.subEntries.length > 0) {
+            const matchSub = cell.subEntries.find((s) => s.location === targetRoom);
+            if (matchSub) {
+              entry = {
+                year: yr,
+                batch: matchSub.batch,
+                course: matchSub.course,
+                faculty: matchSub.faculty,
+                cellType: "PRACTICAL",
+                location: matchSub.location
+              };
+              totalOccupied++;
+              sessions.push({
+                day,
+                period,
+                year: yr,
+                batch: matchSub.batch,
+                course: matchSub.course,
+                faculty: matchSub.faculty,
+                cellType: "PRACTICAL"
+              });
+              break;
+            }
+          }
+        }
+
+        grid[day][period] = entry;
+      });
+    });
+
+    const totalCapacity = 30; // 5 days * 6 periods
+    const utilizationPct = ((totalOccupied / totalCapacity) * 100).toFixed(1);
+
+    return {
+      grid,
+      stats: {
+        totalOccupied,
+        totalCapacity,
+        utilizationPct
+      },
+      sessions
+    };
+  };
+
+  const computeAllRoomsOverview = () => {
+    const rooms = getAllClassrooms();
+    const roomStats = rooms.map((r) => {
+      const schedule = computeRoomSchedule(r.code);
+      return {
+        room: r.code,
+        year: r.year,
+        label: r.label,
+        totalOccupied: schedule.stats.totalOccupied,
+        utilizationPct: schedule.stats.utilizationPct,
+        sessions: schedule.sessions
+      };
+    });
+
+    const matrix = {};
+    days.forEach((day) => {
+      matrix[day] = {};
+      periods.forEach((period) => {
+        matrix[day][period] = {};
+        rooms.forEach((r) => {
+          let entry = null;
+          for (const yr of ["SY", "TY", "BTECH"]) {
+            const cell = getCell(yr, day, period);
+            if (!cell || cell.course === "—") continue;
+
+            if (cell.location === r.code) {
+              entry = {
+                year: yr,
+                course: cell.course,
+                faculty: cell.faculty,
+                cellType: cell.cellType || "THEORY"
+              };
+              break;
+            }
+          }
+          matrix[day][period][r.code] = entry;
+        });
+      });
+    });
+
+    return { roomStats, matrix, rooms };
+  };
+
+  const computeAllFacultyMasterMatrix = () => {
+    const facList = inputs?.faculties || [];
+    const facultySchedules = facList.map((f) => {
+      const sched = computeFacultySchedule(f.name);
+      return {
+        faculty: f,
+        schedule: sched
+      };
+    });
+
+    return {
+      faculties: facList,
+      facultySchedules
+    };
+  };
+
+  const renderOfficialBlockRowPair = (p1, p2, sr1, time1, sr2, time2, facSched, currentFaculty) => {
+    const daysList = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"];
+
+    const dayMergedInfo = {};
+    daysList.forEach((day) => {
+      const s1 = facSched?.grid?.[day]?.[p1];
+      const s2 = facSched?.grid?.[day]?.[p2];
+
+      const isTwoHrSpecial = s1 && s2 && s1.course === s2.course && (
+        (s1.course || "").includes("Capstone") ||
+        (s1.course || "").includes("M.Tech") ||
+        (s1.course || "").includes("Project") ||
+        (s1.course || "").includes("Mentoring")
+      );
+
+      const isTwoHrPrac = s1 && s2 && s1.type === "PRACTICAL" && s2.type === "PRACTICAL";
+
+      dayMergedInfo[day] = {
+        isTwoHrSpecial,
+        isTwoHrPrac,
+        s1,
+        s2
+      };
+    });
+
+    return (
+      <Fragment>
+        {/* Row 1 */}
+        <tr>
+          <td style={{ fontWeight: 700 }}>{sr1}</td>
+          <td style={{ fontSize: "10.5px", whiteSpace: "pre-line", fontWeight: 600 }}>{time1}</td>
+          {daysList.map((day) => {
+            const info = dayMergedInfo[day];
+            if (info.isTwoHrSpecial) {
+              return (
+                <td key={day} colSpan="3" rowSpan="2" style={{ fontWeight: 700, fontSize: "11px", textAlign: "center" }}>
+                  {info.s1.course}
+                </td>
+              );
+            }
+            if (info.isTwoHrPrac) {
+              return (
+                <Fragment key={day}>
+                  <td rowSpan="2" style={{ fontWeight: 700, fontSize: "11px", width: "4%" }}>{info.s1.year}</td>
+                  <td rowSpan="2" style={{ fontWeight: 700, fontSize: "11px", width: "7.5%" }}>
+                    {info.s1.batch ? `${info.s1.batch}-${info.s1.course}` : info.s1.course}
+                  </td>
+                  <td rowSpan="2" style={{ fontWeight: 700, fontSize: "11px", width: "4.5%" }}>{info.s1.location}</td>
+                </Fragment>
+              );
+            }
+            if (info.s1) {
+              return (
+                <Fragment key={day}>
+                  <td style={{ fontWeight: 700, fontSize: "10.5px", width: "4%" }}>{info.s1.year || info.s1.course}</td>
+                  <td style={{ fontWeight: 700, fontSize: "10.5px", width: "7.5%" }}>{info.s1.course || currentFaculty}</td>
+                  <td style={{ fontWeight: 700, fontSize: "10.5px", width: "4.5%" }}>{info.s1.location}</td>
+                </Fragment>
+              );
+            }
+            return (
+              <Fragment key={day}>
+                <td style={{ width: "4%" }}></td>
+                <td style={{ width: "7.5%" }}></td>
+                <td style={{ width: "4.5%" }}></td>
+              </Fragment>
+            );
+          })}
+          {/* Saturday in Row 1 */}
+          <td style={{ width: "4%" }}></td>
+          <td style={{ width: "7.5%" }}></td>
+          <td style={{ width: "4.5%" }}></td>
+        </tr>
+
+        {/* Row 2 */}
+        <tr>
+          <td style={{ fontWeight: 700 }}>{sr2}</td>
+          <td style={{ fontSize: "10.5px", whiteSpace: "pre-line", fontWeight: 600 }}>{time2}</td>
+          {daysList.map((day) => {
+            const info = dayMergedInfo[day];
+            if (info.isTwoHrSpecial || info.isTwoHrPrac) {
+              return null; // Merged in Row 1
+            }
+            if (info.s2) {
+              return (
+                <Fragment key={day}>
+                  <td style={{ fontWeight: 700, fontSize: "10.5px", width: "4%" }}>{info.s2.year || info.s2.course}</td>
+                  <td style={{ fontWeight: 700, fontSize: "10.5px", width: "7.5%" }}>{info.s2.course || currentFaculty}</td>
+                  <td style={{ fontWeight: 700, fontSize: "10.5px", width: "4.5%" }}>{info.s2.location}</td>
+                </Fragment>
+              );
+            }
+            return (
+              <Fragment key={day}>
+                <td style={{ width: "4%" }}></td>
+                <td style={{ width: "7.5%" }}></td>
+                <td style={{ width: "4.5%" }}></td>
+              </Fragment>
+            );
+          })}
+          {/* Saturday in Row 2 */}
+          <td style={{ width: "4%" }}></td>
+          <td style={{ width: "7.5%" }}></td>
+          <td style={{ width: "4.5%" }}></td>
+        </tr>
+      </Fragment>
+    );
+  };
+
+  const getOfficialClassIndex = (year) => {
+    const yrData = inputs?.yearData?.[year] || {};
+    const subjects = yrData.subjects || [];
+    const labCourses = yrData.labCourses || [];
+    const fixedSlots = yrData.fixedSlots || [];
+    const practicals = yrData.practicals || [];
+
+    const teacherRefMap = {
+      ACA: "Mr.Dr.A.C.Adamuthe",
+      DSB: "Dr.d.s.bHOSALE",
+      SPP: "Mrs.S.P.Patil",
+      PTS: "Prof. P. T. Sawant",
+      DTM: "Prof. D. T. Mane",
+      MNM: "Prof. M. N. Mulla(TPC)",
+      ANM: "Mrs.Dr.A.N.Mandale",
+      RSP: "Mrs. R.S. Patil",
+      VUP: "Mrs. V.U. Patil",
+      TNK: "Ms.T.N.Kamble",
+      SJ: "Ms.S.P.Shinde",
+      SPS: "Ms.S.P.Shinde",
+      PSP: "Mrs.P.S.Patil",
+      SUM: "Dr. S. U. Mane",
+      DBC: "Mr. D. B. Chougule",
+      MSK: "Mr. M. S. Kumbhar",
+      MAV: "Mrs. M. A. Vairat",
+      ARJ: "Mrs. A. R. Jamadagni",
+      SEB: "Mrs. S. E. Bhosale",
+      VVJ: "Prof. V. V. Jagtap",
+      RRL: "Prof. R. R. Londhe"
+    };
+
+    const courseRefMap = {
+      DM: "Discrete Mathematics",
+      DS: "Data Structures",
+      COA: "Digital Logic and Computer Organization",
+      "MDM-I": "MDM-I (Data Structures)",
+      EVS: "Environmental Science",
+      OOPJ: "Object Oriented Programming with Java Lab",
+      ITTT: "IT Tools and Technologies Lab"
+    };
+
+    const courses = [];
+    const seenCourses = new Set();
+
+    if (year === "SY") {
+      const syBenchmarkCourses = [
+        { abbr: "DM", name: "Discrete Mathematics" },
+        { abbr: "DS", name: "Data Structures" },
+        { abbr: "COA", name: "Digital Logic and Computer Organization" },
+        { abbr: "MDM-I", name: "MDM-I (Data Structures)" },
+        { abbr: "EVS", name: "Environmental Science" },
+        { abbr: "OOPJ", name: "Object Oriented Programming with Java Lab" },
+        { abbr: "DS", name: "Data Structures Lab" },
+        { abbr: "ITTT", name: "IT Tools and Technologies Lab" }
+      ];
+      syBenchmarkCourses.forEach((c) => courses.push(c));
+    } else {
+      subjects.forEach((s) => {
+        if (!seenCourses.has(s.code)) {
+          seenCourses.add(s.code);
+          courses.push({ abbr: s.code, name: s.name || courseRefMap[s.code] || s.code });
+        }
+      });
+      labCourses.forEach((lc) => {
+        if (!seenCourses.has(lc.code)) {
+          seenCourses.add(lc.code);
+          courses.push({ abbr: lc.code, name: lc.name || `${lc.code} Lab` });
+        }
+      });
+      fixedSlots.forEach((fs) => {
+        const code = (fs.courseName || "").split(/[-/]/)[0].trim();
+        if (code && !seenCourses.has(code) && code !== "Language" && code !== "PSD") {
+          seenCourses.add(code);
+          courses.push({ abbr: code, name: fs.courseName });
+        }
+      });
+    }
+
+    const teachers = [];
+    const seenTeachers = new Set();
+
+    if (year === "SY") {
+      const syBenchmarkTeachers = [
+        { abbr: "ACA", name: "Mr.Dr.A.C.Adamuthe" },
+        { abbr: "DSB", name: "Dr.d.s.bHOSALE" },
+        { abbr: "SPP", name: "Mrs.S.P.Patil" },
+        { abbr: "PTS", name: "Prof. P. T. Sawant" },
+        { abbr: "DTM", name: "Prof. D. T. Mane" },
+        { abbr: "MNM", name: "Prof. M. N. Mulla(TPC)" },
+        { abbr: "ANM", name: "Mrs.Dr.A.N.Mandale" },
+        { abbr: "RSP", name: "Mrs. R.S. Patil" },
+        { abbr: "VUP", name: "Mrs. V.U. Patil" },
+        { abbr: "TNK", name: "Ms.T.N.Kamble" },
+        { abbr: "SJ", name: "Ms.S.P.Shinde" },
+        { abbr: "PSP", name: "Mrs.P.S.Patil" }
+      ];
+      syBenchmarkTeachers.forEach((t) => teachers.push(t));
+    } else {
+      const addTeacher = (code) => {
+        if (!code) return;
+        code.split(/[/,\s]+/).forEach((c) => {
+          const clean = c.trim().toUpperCase();
+          if (clean && !seenTeachers.has(clean)) {
+            seenTeachers.add(clean);
+            const fullName = teacherRefMap[clean] || getFacultyFullName(clean) || clean;
+            teachers.push({ abbr: clean, name: fullName });
+          }
+        });
+      };
+      subjects.forEach((s) => addTeacher(s.faculty?.name));
+      practicals.forEach((p) => addTeacher(p.faculty));
+      fixedSlots.forEach((f) => addTeacher(f.facultyName));
+    }
+
+    return { courses, teachers };
+  };
+
+  const renderOfficialClassBlockRowPair = (p1, p2, sr1, time1, sr2, time2, year) => {
+    const daysList = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"];
+
+    const dayMergedInfo = {};
+    daysList.forEach((day) => {
+      const c1 = getCell(year, day, p1);
+      const c2 = getCell(year, day, p2);
+
+      const isTwoHrPrac = (c1?.subEntries && c1.subEntries.length > 0) || c1?.type === "PRACTICAL" || (c2?.subEntries && c2.subEntries.length > 0) || c2?.type === "PRACTICAL";
+
+      const isTwoHrSpecial = (
+        (c1?.course && (c1.course.includes("PSD") || c1.course.includes("German") || c1.course.includes("Language") || c1.course.includes("Capstone") || c1.course.includes("Project"))) ||
+        (c1 && c2 && c1.course === c2.course && (c1.course.includes("Mentoring") || c1.course.includes("Seminar")))
+      );
+
+      const isWide1 = c1?.course && (
+        c1.course.includes("MDM-I") ||
+        c1.course.includes("Mentoring") ||
+        c1.course.includes("Language") ||
+        c1.course.includes("Project") ||
+        c1.course.includes("Seminar")
+      );
+      const isWide2 = c2?.course && (
+        c2.course.includes("MDM-I") ||
+        c2.course.includes("Mentoring") ||
+        c2.course.includes("Language") ||
+        c2.course.includes("Project") ||
+        c2.course.includes("Seminar")
+      );
+
+      dayMergedInfo[day] = {
+        isTwoHrPrac,
+        isTwoHrSpecial,
+        isWide1,
+        isWide2,
+        c1,
+        c2
+      };
+    });
+
+    const isSatLanguage = p1 === 1 && p2 === 2;
+
+    return (
+      <Fragment>
+        {/* Row 1 */}
+        <tr>
+          <td style={{ fontWeight: 700, width: "35px", verticalAlign: "middle" }}>{sr1}</td>
+          <td style={{ fontSize: "10.5px", whiteSpace: "pre-line", fontWeight: 600, width: "80px", verticalAlign: "middle" }}>{time1}</td>
+          {daysList.map((day) => {
+            const info = dayMergedInfo[day];
+
+            if (info.isTwoHrPrac) {
+              const entries = info.c1?.subEntries && info.c1.subEntries.length > 0 ? info.c1.subEntries : (info.c2?.subEntries || []);
+              return (
+                <td key={day} colSpan="3" rowSpan="2" style={{ padding: 0, verticalAlign: "middle", height: "100%" }}>
+                  <table style={{ width: "100%", height: "100%", borderCollapse: "collapse", margin: 0, fontSize: "10.5px" }}>
+                    <tbody>
+                      {entries.map((b, bIdx) => (
+                        <tr key={bIdx} style={{ borderBottom: bIdx < entries.length - 1 ? "1px solid #000" : "none" }}>
+                          <td style={{ width: "42%", padding: "2px 4px", fontWeight: 700, textAlign: "left", whiteSpace: "nowrap" }}>
+                            {b.batch ? `${b.batch} -${b.course}` : b.course}
+                          </td>
+                          <td style={{ width: "28%", padding: "2px 4px", fontWeight: 700, textAlign: "center", borderLeft: "1px solid #000", borderRight: "1px solid #000" }}>
+                            {b.faculty}
+                          </td>
+                          <td style={{ width: "30%", padding: "2px 4px", fontWeight: 600, textAlign: "center" }}>
+                            {b.location}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </td>
+              );
+            }
+
+            if (info.isTwoHrSpecial) {
+              const bg = (info.c1?.course || "").includes("PSD") || (info.c1?.course || "").includes("German") ? "#e2b7b7" : "#ffffff";
+              return (
+                <td key={day} colSpan="3" rowSpan="2" style={{ background: bg, fontWeight: 700, fontSize: "10px", padding: "4px", textAlign: "center", verticalAlign: "middle" }}>
+                  {info.c1?.course}
+                </td>
+              );
+            }
+
+            if (info.isWide1) {
+              const isMDM = (info.c1?.course || "").includes("MDM");
+              return (
+                <td key={day} colSpan="3" style={{ background: isMDM ? "#93c5fd" : "#ffffff", fontWeight: 700, fontSize: "10.5px", padding: "4px", textAlign: "center", verticalAlign: "middle" }}>
+                  {info.c1?.course}
+                </td>
+              );
+            }
+
+            if (info.c1 && info.c1.course && info.c1.course !== "—") {
+              return (
+                <Fragment key={day}>
+                  <td style={{ fontWeight: 700, fontSize: "11px", width: "4.5%", verticalAlign: "middle" }}>{info.c1.course}</td>
+                  <td style={{ fontWeight: 700, fontSize: "11px", width: "4%", verticalAlign: "middle" }}>{info.c1.faculty}</td>
+                  <td style={{ fontWeight: 600, fontSize: "10.5px", width: "4%", verticalAlign: "middle" }}>{info.c1.location}</td>
+                </Fragment>
+              );
+            }
+
+            return (
+              <Fragment key={day}>
+                <td style={{ width: "4.5%" }}></td>
+                <td style={{ width: "4%" }}></td>
+                <td style={{ width: "4%" }}></td>
+              </Fragment>
+            );
+          })}
+
+          {/* Saturday Column in Row 1 */}
+          {isSatLanguage ? (
+            <td colSpan="3" rowSpan="2" style={{ background: "#e2b7b7", fontWeight: 700, fontSize: "10px", padding: "4px", textAlign: "center", verticalAlign: "middle" }}>
+              Language (Mech, Mechatronics, Rob.&Auto, Civil, CSE, CSE-AIML)
+            </td>
+          ) : (
+            <Fragment>
+              <td style={{ width: "4.5%" }}></td>
+              <td style={{ width: "4%" }}></td>
+              <td style={{ width: "4%" }}></td>
+            </Fragment>
+          )}
+        </tr>
+
+        {/* Row 2 */}
+        <tr>
+          <td style={{ fontWeight: 700, width: "35px", verticalAlign: "middle" }}>{sr2}</td>
+          <td style={{ fontSize: "10.5px", whiteSpace: "pre-line", fontWeight: 600, width: "80px", verticalAlign: "middle" }}>{time2}</td>
+          {daysList.map((day) => {
+            const info = dayMergedInfo[day];
+
+            if (info.isTwoHrPrac || info.isTwoHrSpecial) {
+              return null; // Handled in Row 1 with rowSpan="2"
+            }
+
+            if (info.isWide2) {
+              const isMDM = (info.c2?.course || "").includes("MDM");
+              return (
+                <td key={day} colSpan="3" style={{ background: isMDM ? "#93c5fd" : "#ffffff", fontWeight: 700, fontSize: "10.5px", padding: "4px", textAlign: "center", verticalAlign: "middle" }}>
+                  {info.c2?.course}
+                </td>
+              );
+            }
+
+            if (info.c2 && info.c2.course && info.c2.course !== "—") {
+              return (
+                <Fragment key={day}>
+                  <td style={{ fontWeight: 700, fontSize: "11px", width: "4.5%", verticalAlign: "middle" }}>{info.c2.course}</td>
+                  <td style={{ fontWeight: 700, fontSize: "11px", width: "4%", verticalAlign: "middle" }}>{info.c2.faculty}</td>
+                  <td style={{ fontWeight: 600, fontSize: "10.5px", width: "4%", verticalAlign: "middle" }}>{info.c2.location}</td>
+                </Fragment>
+              );
+            }
+
+            return (
+              <Fragment key={day}>
+                <td style={{ width: "4.5%" }}></td>
+                <td style={{ width: "4%" }}></td>
+                <td style={{ width: "4%" }}></td>
+              </Fragment>
+            );
+          })}
+
+          {/* Saturday Column in Row 2 */}
+          {!isSatLanguage && (
+            <Fragment>
+              <td style={{ width: "4.5%" }}></td>
+              <td style={{ width: "4%" }}></td>
+              <td style={{ width: "4%" }}></td>
+            </Fragment>
+          )}
+        </tr>
+      </Fragment>
+    );
+  };
+
   const computeClassIndex = (year) => {
     const yrData = inputs?.yearData?.[year] || {};
     const theorySubjects = yrData.subjects || [];
@@ -3649,24 +5046,68 @@ function MasterTimetable() {
   return (
     <div className="master-timetable-page">
       {/* Dynamic View Title Card */}
-      <div className="master-header-card">
-        <div className="header-card-left">
-          <h2 className="header-view-title">
-            {selectedView === "ALL" && "Master Department Timetable"}
-            {selectedView === "CLASS" && `${selectedClassYear === "SY" ? "Second Year (S.Y. B.Tech) - Sem-III" : (selectedClassYear === "TY" ? "Third Year (T.Y. B.Tech) - Sem-V" : "Final Year (B.Tech) - Sem-VII")} Timetable`}
-            {selectedView === "FACULTY" && `Faculty Schedule: ${getFacultyFullName(selectedFaculty)} (${selectedFaculty})`}
-            {selectedView === "LAB" && `Laboratory Schedule: ${selectedLab === "ALL" ? "All Labs Matrix" : selectedLab}`}
-          </h2>
-          <div className="header-sub-info">
-            <span>Department of Information Technology</span>
-            <span className="dot-sep">•</span>
-            <span>Rajarambapu Institute of Technology</span>
+      <div className="master-header-card" style={(selectedView === "ALL" || selectedView === "CLASS_MASTER") ? { display: "flex", justifyContent: "center", alignItems: "center", textAlign: "center", padding: "16px" } : {}}>
+        {(selectedView === "ALL" || selectedView === "CLASS_MASTER") ? (
+          <div style={{ textAlign: "center", width: "100%" }}>
+            <div style={{ fontSize: "14px", fontWeight: 700, letterSpacing: "0.5px", color: "#1e3a8a" }}>K.E.Society's</div>
+            <div style={{ fontSize: "16.5px", fontWeight: 800, marginTop: "3px", color: "#0f172a" }}>Rajarambapu Institute of Technology ,Rajaramnagar</div>
+            <div style={{ fontSize: "14.5px", fontWeight: 700, marginTop: "3px", textDecoration: "underline", color: "#1e3a8a" }}>Department of Information Technology</div>
+            <div style={{ fontSize: "15px", fontWeight: 800, marginTop: "3px", textDecoration: "underline", color: "#0f172a" }}>Master Class Time Table</div>
+            <div style={{ fontSize: "13.5px", fontWeight: 700, marginTop: "3px", color: "#2563eb" }}>{academicSession}/ {academicSemester}</div>
           </div>
-        </div>
-        <div className="header-card-right no-print">
-          <span className="badge-dept">IT Department</span>
-        </div>
+        ) : (
+          <>
+            <div className="header-card-left">
+              <h2 className="header-view-title">
+                {selectedView === "CLASS" && `${selectedClassYear === "SY" ? "Second Year (S.Y. B.Tech) - Sem-III" : (selectedClassYear === "TY" ? "Third Year (T.Y. B.Tech) - Sem-V" : "Final Year (B.Tech) - Sem-VII")} Timetable`}
+                {selectedView === "LOAD_SHEET" && "Total Staff Load Sheet - Department Workload Allocation"}
+                {selectedView === "FACULTY_MASTER" && "Master Personal Faculty Time Table (Synchronized Matrix)"}
+                {selectedView === "FACULTY" && `Personal Faculty Schedule: ${getFacultyFullName(selectedFaculty)} (${selectedFaculty})`}
+                {selectedView === "ROOM_MASTER" && "Master Classroom Time Table (All Theory Lecture Halls)"}
+                {selectedView === "ROOM" && `Personal Classroom Schedule: ${selectedRoom}`}
+                {(selectedView === "LAB" || selectedView === "LAB_MASTER") && `Laboratory Schedule: ${selectedLab === "ALL" || selectedView === "LAB_MASTER" ? "Lab Master Time Table (All Labs Overview)" : `Lab Personal Time Table (${selectedLab})`}`}
+              </h2>
+              <div className="header-sub-info">
+                <span>Department of Information Technology</span>
+                <span className="dot-sep">•</span>
+                <span>Rajarambapu Institute of Technology</span>
+              </div>
+            </div>
+            <div className="header-card-right no-print">
+              <span className="badge-dept">IT Department</span>
+            </div>
+          </>
+        )}
       </div>
+
+      {/* Save Status / Feedback Toast Banner */}
+      {saveStatusMessage && (
+        <div className="no-print" style={{
+          margin: "0 0 12px",
+          padding: "12px 18px",
+          borderRadius: "8px",
+          background: saveStatusMessage.type === "success" ? "#dcfce7" : (saveStatusMessage.type === "error" ? "#fee2e2" : "#eff6ff"),
+          border: `1.5px solid ${saveStatusMessage.type === "success" ? "#86efac" : (saveStatusMessage.type === "error" ? "#fca5a5" : "#93c5fd")}`,
+          color: saveStatusMessage.type === "success" ? "#166534" : (saveStatusMessage.type === "error" ? "#991b1b" : "#1e40af"),
+          fontSize: "13px",
+          fontWeight: 600,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)"
+        }}>
+          <span>{saveStatusMessage.text}</span>
+          <button
+            type="button"
+            onClick={() => setSaveStatusMessage(null)}
+            style={{ background: "transparent", border: "none", cursor: "pointer", fontWeight: 800, color: "inherit", fontSize: "14px", padding: "2px 6px" }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+
 
       {/* Control Actions Bar */}
       <div className="master-actions-bar no-print">
@@ -3812,6 +5253,52 @@ function MasterTimetable() {
               )}
             </div>
           )}
+          {/* ONLY 2 ACTION BUTTONS: SAVE AND RESET */}
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => handleSaveAllData(false)}
+            style={{
+              background: "linear-gradient(135deg, #15803d 0%, #16a34a 100%)",
+              borderColor: "#15803d",
+              color: "white",
+              fontWeight: 700,
+              fontSize: "13px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              boxShadow: "0 2px 6px rgba(22, 163, 74, 0.25)",
+              padding: "8px 18px",
+              borderRadius: "6px",
+              cursor: "pointer"
+            }}
+            title={lastSavedTime ? `Instantly save all current updates. Last saved: ${lastSavedTime}` : "Save all department data, course allotments, and generated timetables"}
+          >
+            💾 Save
+          </button>
+
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setResetModalOpen(true)}
+            style={{
+              background: "#ffffff",
+              borderColor: "#cbd5e1",
+              color: "#1e293b",
+              fontWeight: 700,
+              fontSize: "13px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 16px",
+              borderRadius: "6px",
+              cursor: "pointer"
+            }}
+            title="Reset options: Reload from last saved point, Reset to RIT Benchmark Preset, or Reset to Blank Canvas"
+          >
+            🔄 Reset
+          </button>
+
           <button
             type="button"
             className="btn-secondary"
@@ -3851,53 +5338,150 @@ function MasterTimetable() {
           >
             🖨 Print / Export PDF
           </button>
+
+          {/* Quick Excel Export Actions */}
           <button
             type="button"
             className="btn-secondary"
-            onClick={handleSaveToDb}
-            disabled={savingToDb || !masterData}
-            title="Persist this complete generated timetable into the database"
-            style={{ display: "inline-flex", alignItems: "center", gap: "6px", backgroundColor: "#f0fdf4", color: "#166534", borderColor: "#bbf7d0", fontWeight: 600 }}
+            onClick={() => {
+              if (selectedView === "CLASS") {
+                handleExportCurrentClassExcel(selectedClassYear);
+              } else if (selectedView === "FACULTY") {
+                const facSched = getFacultySchedule(selectedFaculty);
+                const asgn = getFacultyAssignments(selectedFaculty);
+                const facObj = (inputs.faculties || []).find((f) => f.name === selectedFaculty);
+                exportPersonalTimetableToExcel({
+                  facultyCode: selectedFaculty,
+                  facultyName: getFacultyFullName(selectedFaculty),
+                  designation: facObj?.designation || "Assistant Professor",
+                  centralAuthority: facObj?.centralAuthority || "None",
+                  academicSession,
+                  academicSemester,
+                  facSched,
+                  assignments: asgn
+                });
+              } else {
+                exportMasterDepartmentToExcel({
+                  academicSession,
+                  academicSemester,
+                  masterData,
+                  inputs,
+                  periodTimings
+                });
+              }
+            }}
+            disabled={!masterData}
+            title="Export timetable directly as an Excel spreadsheet (.xlsx)"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              backgroundColor: "#ecfdf5",
+              color: "#065f46",
+              borderColor: "#a7f3d0",
+              fontWeight: 700
+            }}
           >
-            {savingToDb ? "💾 Saving..." : "💾 Save to DB"}
+            📥 Export to Excel (.xlsx)
           </button>
           <button
             type="button"
             className="btn-secondary"
-            onClick={handleOpenDbModal}
-            title="Browse and load previously saved timetables from the database"
-            style={{ display: "inline-flex", alignItems: "center", gap: "6px", backgroundColor: "#eff6ff", color: "#1e40af", borderColor: "#bfdbfe", fontWeight: 600 }}
+            onClick={() => exportMasterDepartmentToExcel({
+              academicSession,
+              academicSemester,
+              masterData,
+              inputs,
+              periodTimings
+            })}
+            disabled={!masterData}
+            title="Export complete departmental multi-sheet master workbook (SY, TY, BTech, Master, and Staff Load)"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "5px",
+              backgroundColor: "#f0fdf4",
+              color: "#166534",
+              borderColor: "#bbf7d0",
+              fontWeight: 600,
+              fontSize: "12px"
+            }}
           >
-            📂 Load from DB
+            📑 Master Workbook (.xlsx)
           </button>
         </div>
       </div>
 
       {/* Sub-view Selector for Student Class View */}
       {selectedView === "CLASS" && (
-        <div className="sub-view-bar no-print">
-          <span className="sub-view-label">Select Academic Class:</span>
-          <button
-            type="button"
-            className={`sub-view-btn ${selectedClassYear === "SY" ? "active" : ""}`}
-            onClick={() => setSelectedClassYear("SY")}
-          >
-            S.Y. B.Tech (Room {getClassroom("SY")})
-          </button>
-          <button
-            type="button"
-            className={`sub-view-btn ${selectedClassYear === "TY" ? "active" : ""}`}
-            onClick={() => setSelectedClassYear("TY")}
-          >
-            T.Y. B.Tech (Room {getClassroom("TY")})
-          </button>
-          <button
-            type="button"
-            className={`sub-view-btn ${selectedClassYear === "BTECH" ? "active" : ""}`}
-            onClick={() => setSelectedClassYear("BTECH")}
-          >
-            Final Year B.Tech (Room {getClassroom("BTECH")})
-          </button>
+        <div className="sub-view-bar no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            <span className="sub-view-label">Select Academic Class:</span>
+            <button
+              type="button"
+              className={`sub-view-btn ${selectedClassYear === "SY" ? "active" : ""}`}
+              onClick={() => setSelectedClassYear("SY")}
+            >
+              S.Y. B.Tech — {academicSemester === "PART-I" ? "Sem-III" : "Sem-IV"} (Room {getClassroom("SY")})
+            </button>
+            <button
+              type="button"
+              className={`sub-view-btn ${selectedClassYear === "TY" ? "active" : ""}`}
+              onClick={() => setSelectedClassYear("TY")}
+            >
+              T.Y. B.Tech — {academicSemester === "PART-I" ? "Sem-V" : "Sem-VI"} (Room {getClassroom("TY")})
+            </button>
+            <button
+              type="button"
+              className={`sub-view-btn ${selectedClassYear === "BTECH" ? "active" : ""}`}
+              onClick={() => setSelectedClassYear("BTECH")}
+            >
+              Final Year B.Tech — {academicSemester === "PART-I" ? "Sem-VII" : "Sem-VIII"} (Room {getClassroom("BTECH")})
+            </button>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            <select
+              value={academicSession}
+              onChange={(e) => setAcademicSession(e.target.value)}
+              style={{ padding: "5px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: 700 }}
+              title="Select Academic Session"
+            >
+              <option value="2026-27">Session 2026-27</option>
+              <option value="2025-26">Session 2025-26</option>
+              <option value="2024-25">Session 2024-25</option>
+              <option value="2023-24">Session 2023-24</option>
+            </select>
+            <select
+              value={academicSemester}
+              onChange={(e) => setAcademicSemester(e.target.value)}
+              style={{ padding: "5px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: 700 }}
+              title="Select Semester Term (PART-I: Odd Sems, PART-II: Even Sems)"
+            >
+              <option value="PART-I">PART-I (Odd: Sem III, V, VII)</option>
+              <option value="PART-II">PART-II (Even: Sem IV, VI, VIII)</option>
+            </select>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => handleExportCurrentClassExcel(selectedClassYear)}
+              disabled={!masterData}
+              style={{
+                fontSize: "12px",
+                padding: "5px 12px",
+                background: "#10b981",
+                color: "white",
+                borderColor: "#059669",
+                fontWeight: 700,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "5px"
+              }}
+              title={`Download ${selectedClassYear} ${getSemesterForYear(selectedClassYear, academicSemester)} Timetable (.xlsx)`}
+            >
+              📥 Download {selectedClassYear} Excel (.xlsx)
+            </button>
+          </div>
         </div>
       )}
 
@@ -3919,9 +5503,11 @@ function MasterTimetable() {
           >
             {(inputs.faculties || []).map((f) => {
               const asgn = getFacultyAssignments(f.name);
+              const desigStr = f.designation || "Assistant Professor";
+              const authStr = f.centralAuthority && f.centralAuthority !== "None" ? ` - ${f.centralAuthority}` : "";
               return (
                 <option key={f.name} value={f.name}>
-                  {f.name} - {f.fullName || f.name} ({asgn.totalHours} hrs/wk · Max: {f.maxDailyLectures || 4}/day)
+                  {f.name} - {f.fullName || f.name} [{desigStr}{authStr}] ({asgn.totalHours} hrs/wk · Max: {f.maxDailyLectures || 4}/day)
                 </option>
               );
             })}
@@ -3930,6 +5516,8 @@ function MasterTimetable() {
           <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginLeft: "10px" }}>
             {(inputs.faculties || []).map((f) => {
               const asgn = getFacultyAssignments(f.name);
+              const desigStr = f.designation || "Assistant Professor";
+              const authStr = f.centralAuthority && f.centralAuthority !== "None" ? ` (${f.centralAuthority})` : "";
               return (
                 <button
                   key={f.name}
@@ -3937,7 +5525,7 @@ function MasterTimetable() {
                   className={`sub-view-btn ${selectedFaculty === f.name ? "active" : ""}`}
                   onClick={() => setSelectedFaculty(f.name)}
                   style={{ fontSize: "11px", padding: "4px 8px" }}
-                  title={`${f.fullName || f.name} (${asgn.totalHours} hrs/week load)`}
+                  title={`${f.fullName || f.name} - ${desigStr}${authStr} (${asgn.totalHours} hrs/week load)`}
                 >
                   {f.name} <span style={{ opacity: 0.8, fontSize: "10px" }}>({asgn.totalHours}h)</span>
                 </button>
@@ -3948,7 +5536,7 @@ function MasterTimetable() {
       )}
 
       {/* Sub-view Selector for Lab View */}
-      {selectedView === "LAB" && (
+      {(selectedView === "LAB" || selectedView === "LAB_MASTER") && (
         <div className="sub-view-bar no-print">
           <span className="sub-view-label">Select Computer Laboratory:</span>
           <button
@@ -3968,6 +5556,107 @@ function MasterTimetable() {
               {lab}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Sub-view Selector for Classroom View */}
+      {selectedView === "ROOM" && (
+        <div className="sub-view-bar no-print">
+          <span className="sub-view-label">Select Lecture Classroom:</span>
+          {getAllClassrooms().map((r) => (
+            <button
+              key={r.code}
+              type="button"
+              className={`sub-view-btn ${selectedRoom === r.code ? "active" : ""}`}
+              onClick={() => setSelectedRoom(r.code)}
+            >
+              🏛️ {r.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="sub-view-btn"
+            style={{ marginLeft: "auto", background: "#f1f5f9", color: "#2563eb", fontWeight: 700 }}
+            onClick={() => setSelectedView("ROOM_MASTER")}
+          >
+            📊 View Master Classroom Matrix →
+          </button>
+        </div>
+      )}
+
+      {/* Sub-view Selector for Master Classroom View */}
+      {selectedView === "ROOM_MASTER" && (
+        <div className="sub-view-bar no-print">
+          <span className="sub-view-label">Classrooms Matrix:</span>
+          <span style={{ fontSize: "12px", color: "#475569", fontWeight: 600 }}>
+            Showing synchronized schedules for CR-27 (SY), CR-26 (TY) and CR-212 (BTech)
+          </span>
+          <div style={{ marginLeft: "auto", display: "flex", gap: "6px" }}>
+            {getAllClassrooms().map((r) => (
+              <button
+                key={r.code}
+                type="button"
+                className="sub-view-btn"
+                style={{ fontSize: "11px", padding: "3px 8px" }}
+                onClick={() => {
+                  setSelectedRoom(r.code);
+                  setSelectedView("ROOM");
+                }}
+              >
+                Go to {r.code} →
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Sub-view Selector for Faculty Master View */}
+      {selectedView === "FACULTY_MASTER" && (
+        <div className="sub-view-bar no-print">
+          <span className="sub-view-label">Filter By Working Day:</span>
+          {[
+            { id: "ALL", label: "📅 All Working Days (Mon - Fri)" },
+            { id: "MONDAY", label: "Monday" },
+            { id: "TUESDAY", label: "Tuesday" },
+            { id: "WEDNESDAY", label: "Wednesday" },
+            { id: "THURSDAY", label: "Thursday" },
+            { id: "FRIDAY", label: "Friday" }
+          ].map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              className={`sub-view-btn ${facultyMasterDay === d.id ? "active" : ""}`}
+              onClick={() => setFacultyMasterDay(d.id)}
+            >
+              {d.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="btn-secondary no-print"
+            onClick={() => window.print()}
+            style={{ marginLeft: "auto", padding: "4px 10px", fontSize: "12px" }}
+          >
+            🖨️ Print Master Sheet
+          </button>
+        </div>
+      )}
+
+      {/* Sub-view Selector for Total Staff Load Sheet View */}
+      {selectedView === "LOAD_SHEET" && (
+        <div className="sub-view-bar no-print">
+          <span className="sub-view-label">Staff Load Sheet:</span>
+          <span style={{ fontSize: "12px", color: "#475569", fontWeight: 600 }}>
+            Department of Information Technology • Academic Faculty Teaching & Lab Workload
+          </span>
+          <button
+            type="button"
+            className="btn-secondary no-print"
+            onClick={() => window.print()}
+            style={{ marginLeft: "auto", padding: "4px 10px", fontSize: "12px" }}
+          >
+            🖨️ Print Load Sheet
+          </button>
         </div>
       )}
 
@@ -4099,15 +5788,240 @@ function MasterTimetable() {
               >
                 🔄 Reset to RIT Preset
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewYearSetupSession(academicSession);
+                  setNewYearSetupSemester(academicSemester);
+                  setNewYearSetupScope("ALL");
+                  setNewYearModalOpen(true);
+                }}
+                className="btn-secondary"
+                style={{
+                  fontSize: "12px",
+                  padding: "6px 12px",
+                  background: "#f0fdf4",
+                  color: "#166534",
+                  borderColor: "#86efac",
+                  fontWeight: 700,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px"
+                }}
+                title="Import last year's faculties, courses, classrooms & labs only, clearing teacher allocations so you can allot fresh and calculate load"
+              >
+                ✨ New Year/Sem Setup (Import Base Data)
+              </button>
+              <button
+                type="button"
+                onClick={handleResetToBlank}
+                className="btn-secondary"
+                style={{
+                  fontSize: "12px",
+                  padding: "6px 12px",
+                  background: "#fef2f2",
+                  color: "#b91c1c",
+                  borderColor: "#fca5a5",
+                  fontWeight: 700
+                }}
+                title="Erase all current data to start entering brand new data from a blank configuration"
+              >
+                🗑️ Reset to Blank
+              </button>
             </div>
           </div>
 
-          <p style={{ margin: "0 0 16px", fontSize: "13px", color: "#475569" }}>
+          <p style={{ margin: "0 0 14px", fontSize: "13px", color: "#475569" }}>
             The generator takes these subjects, faculty members, classrooms, and labs, and runs a synchronized constraint engine ensuring <strong>no teacher or classroom is double-booked across SY, TY, or BTech</strong>.
           </p>
 
+          {/* Academic Year & Semester Configuration Bar */}
+          <div style={{
+            background: "linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 100%)",
+            border: "1px solid #7dd3fc",
+            borderRadius: "8px",
+            padding: "12px 16px",
+            marginBottom: "16px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "12px"
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 700, color: "#0369a1", textTransform: "uppercase" }}>
+                  Academic Session
+                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <select
+                    value={academicSession}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "__ADD_NEW__") {
+                        setNewYearSetupSession(academicSession);
+                        setNewYearSetupSemester(academicSemester);
+                        setShowCustomSessionField(true);
+                        setNewYearModalOpen(true);
+                        return;
+                      }
+                      setAcademicSession(val);
+                      const savedForSession = localStorage.getItem(`payload_${val}_${academicSemester}`);
+                      if (savedForSession) {
+                        try {
+                          const parsed = JSON.parse(savedForSession);
+                          setInputs(parsed);
+                        } catch (err) {}
+                      }
+                    }}
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid #0284c7",
+                      fontSize: "13px",
+                      fontWeight: 700,
+                      color: "#0f172a",
+                      background: "white"
+                    }}
+                    title="Select Academic Year Session"
+                  >
+                    {availableSessions.map((sess) => (
+                      <option key={sess} value={sess}>{sess}</option>
+                    ))}
+                    <option value="__ADD_NEW__">+ Add New Session...</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewYearSetupSession(academicSession);
+                      setNewYearSetupSemester(academicSemester);
+                      setNewYearSetupScope("ALL");
+                      setNewYearModalOpen(true);
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "6px",
+                      padding: "5px 12px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      boxShadow: "0 2px 4px rgba(37,99,235,0.2)"
+                    }}
+                    title="Setup fresh timetable for this academic year/semester by importing faculties, courses, classrooms & labs"
+                  >
+                    ✨ Setup New Timetable
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 700, color: "#0369a1", textTransform: "uppercase" }}>
+                  Academic Term (2 Semesters / Year)
+                </span>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setAcademicSemester("PART-I")}
+                    style={{
+                      padding: "5px 12px",
+                      borderRadius: "6px",
+                      border: academicSemester === "PART-I" ? "2px solid #0284c7" : "1px solid #cbd5e1",
+                      background: academicSemester === "PART-I" ? "#0284c7" : "white",
+                      color: academicSemester === "PART-I" ? "white" : "#334155",
+                      fontWeight: 700,
+                      fontSize: "12px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    PART-I (Odd: Sem III, V, VII)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAcademicSemester("PART-II")}
+                    style={{
+                      padding: "5px 12px",
+                      borderRadius: "6px",
+                      border: academicSemester === "PART-II" ? "2px solid #0284c7" : "1px solid #cbd5e1",
+                      background: academicSemester === "PART-II" ? "#0284c7" : "white",
+                      color: academicSemester === "PART-II" ? "white" : "#334155",
+                      fontWeight: 700,
+                      fontSize: "12px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    PART-II (Even: Sem IV, VI, VIII)
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 700, color: "#0369a1", textTransform: "uppercase" }}>
+                  Active Semester Mapping
+                </span>
+                <span style={{ fontSize: "12px", fontWeight: 600, color: "#0f172a", background: "#f8fafc", padding: "4px 8px", borderRadius: "4px", border: "1px solid #e2e8f0" }}>
+                  SY: <strong>{academicSemester === "PART-I" ? "Sem-III" : "Sem-IV"}</strong> | TY: <strong>{academicSemester === "PART-I" ? "Sem-V" : "Sem-VI"}</strong> | BTech: <strong>{academicSemester === "PART-I" ? "Sem-VII" : "Sem-VIII"}</strong>
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+              <button
+                type="button"
+                onClick={() => handleExportCurrentClassExcel(selectedClassYear)}
+                disabled={!masterData}
+                className="btn-secondary"
+                style={{
+                  fontSize: "12px",
+                  padding: "6px 12px",
+                  background: "#10b981",
+                  color: "white",
+                  borderColor: "#059669",
+                  fontWeight: 700,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px"
+                }}
+                title={`Export ${selectedClassYear} ${getSemesterForYear(selectedClassYear, academicSemester)} Timetable to Excel (.xlsx)`}
+              >
+                📥 Export {selectedClassYear} ({getSemesterForYear(selectedClassYear, academicSemester)}) (.xlsx)
+              </button>
+              <button
+                type="button"
+                onClick={() => exportMasterDepartmentToExcel({
+                  academicSession,
+                  academicSemester,
+                  masterData,
+                  inputs,
+                  periodTimings
+                })}
+                disabled={!masterData}
+                className="btn-secondary"
+                style={{
+                  fontSize: "12px",
+                  padding: "6px 12px",
+                  background: "#0284c7",
+                  color: "white",
+                  borderColor: "#0369a1",
+                  fontWeight: 700,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px"
+                }}
+                title="Export complete departmental multi-sheet master workbook (SY, TY, BTech, and Staff Load Sheet) to Excel (.xlsx)"
+              >
+                📑 Export Full Master (.xlsx)
+              </button>
+            </div>
+          </div>
+
           {/* Sub Tabs */}
-          <div style={{ display: "flex", gap: "8px", borderBottom: "2px solid #e2e8f0", paddingBottom: "10px", marginBottom: "16px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "8px", borderBottom: "2px solid #e2e8f0", paddingBottom: "10px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
             {[
               { id: "SY", label: `📘 SY IT Subjects (${inputs.yearData.SY?.subjects?.length || 0})` },
               { id: "TY", label: `📗 TY IT Subjects (${inputs.yearData.TY?.subjects?.length || 0})` },
@@ -4123,24 +6037,30 @@ function MasterTimetable() {
               { id: "FACULTY", label: `👨‍🏫 Shared Faculty (${inputs.faculties?.length || 0})` },
               { id: "UNAVAILABILITY", label: `🚫 Faculty Off-Slots (${inputs.facultyUnavailability?.length || 0})` },
               { id: "ROOMS", label: `🏫 Classrooms & Labs (${inputs.rooms?.length || 0})` }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveInputTab(tab.id)}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: "6px",
-                  border: "none",
-                  background: activeInputTab === tab.id ? "#1e40af" : "#f1f5f9",
-                  color: activeInputTab === tab.id ? "white" : "#334155",
-                  fontWeight: 600,
-                  fontSize: "12.5px",
-                  cursor: "pointer"
-                }}
-              >
-                {tab.label}
-              </button>
-            ))}
+            ].map((tab) => {
+              const isActive = activeInputTab === tab.id;
+              const bg = isActive ? "#1e40af" : "#f1f5f9";
+              const textCol = isActive ? "white" : "#334155";
+
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveInputTab(tab.id)}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "6px",
+                    border: "none",
+                    background: bg,
+                    color: textCol,
+                    fontWeight: 600,
+                    fontSize: "12.5px",
+                    cursor: "pointer"
+                  }}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
 
           {/* Tab: Faculty */}
@@ -4334,6 +6254,7 @@ function MasterTimetable() {
                     value={newFacultyName}
                     onChange={(e) => setNewFacultyName(e.target.value)}
                     style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", width: "130px" }}
+                    required
                   />
                   <input
                     type="text"
@@ -4342,6 +6263,34 @@ function MasterTimetable() {
                     onChange={(e) => setNewFacultyFullName(e.target.value)}
                     style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", flex: 1, minWidth: "180px" }}
                   />
+                  <select
+                    value={newFacultyDesignation}
+                    onChange={(e) => setNewFacultyDesignation(e.target.value)}
+                    style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", minWidth: "165px", background: "#ffffff", fontWeight: 500 }}
+                    title="Post / Designation"
+                  >
+                    {FACULTY_DESIGNATIONS.map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={newFacultyAuthority}
+                    onChange={(e) => setNewFacultyAuthority(e.target.value)}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      border: newFacultyAuthority !== "None" ? "1px solid #c084fc" : "1px solid #cbd5e1",
+                      background: newFacultyAuthority !== "None" ? "#faf5ff" : "#ffffff",
+                      color: newFacultyAuthority !== "None" ? "#7e22ce" : "#334155",
+                      fontWeight: newFacultyAuthority !== "None" ? 700 : 500,
+                      minWidth: "155px"
+                    }}
+                    title="Central Authority (HOD, TPO, TPC, or None)"
+                  >
+                    {CENTRAL_AUTHORITIES.map((a) => (
+                      <option key={a} value={a}>{a === "None" ? "Authority: None" : `Authority: ${a}`}</option>
+                    ))}
+                  </select>
                   <input
                     type="number"
                     min="1"
@@ -4349,7 +6298,7 @@ function MasterTimetable() {
                     placeholder="Max Daily"
                     value={newFacultyMaxLectures}
                     onChange={(e) => setNewFacultyMaxLectures(e.target.value)}
-                    style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", width: "100px" }}
+                    style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", width: "95px" }}
                     title="Maximum lecture hours per day"
                   />
                   <button type="submit" className="btn-primary" style={{ padding: "8px 16px" }}>
@@ -4362,14 +6311,16 @@ function MasterTimetable() {
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px" }}>
                     <thead>
                       <tr style={{ background: "#f8fafc", textAlign: "left", borderBottom: "2px solid #e2e8f0" }}>
-                        <th style={{ padding: "10px 8px", width: "70px" }}>Code</th>
-                        <th style={{ padding: "10px 8px", minWidth: "160px" }}>Faculty Full Name</th>
-                        <th style={{ padding: "10px 8px", width: "100px" }}>Daily Cap</th>
-                        <th style={{ padding: "10px 8px", minWidth: "160px" }}>Theory Classes (SY/TY/BTech)</th>
-                        <th style={{ padding: "10px 8px", minWidth: "140px" }}>Practical Labs</th>
-                        <th style={{ padding: "10px 8px", minWidth: "120px" }}>Fixed & FY Load</th>
-                        <th style={{ padding: "10px 8px", width: "90px" }}>Total Load</th>
-                        <th style={{ padding: "10px 8px", width: "130px" }}>Capacity Status</th>
+                        <th style={{ padding: "10px 8px", width: "65px" }}>Code</th>
+                        <th style={{ padding: "10px 8px", minWidth: "150px" }}>Faculty Full Name</th>
+                        <th style={{ padding: "10px 8px", minWidth: "155px" }}>Post / Designation</th>
+                        <th style={{ padding: "10px 8px", width: "115px" }}>Authority</th>
+                        <th style={{ padding: "10px 8px", width: "85px" }}>Daily Cap</th>
+                        <th style={{ padding: "10px 8px", minWidth: "150px" }}>Theory Classes (SY/TY/BTech)</th>
+                        <th style={{ padding: "10px 8px", minWidth: "130px" }}>Practical Labs</th>
+                        <th style={{ padding: "10px 8px", minWidth: "110px" }}>Fixed & FY Load</th>
+                        <th style={{ padding: "10px 8px", width: "85px" }}>Total Load</th>
+                        <th style={{ padding: "10px 8px", width: "120px" }}>Capacity Status</th>
                         <th style={{ padding: "10px 8px", textAlign: "center", width: "130px" }}>Actions</th>
                       </tr>
                     </thead>
@@ -4398,12 +6349,101 @@ function MasterTimetable() {
                         return (
                           <tr key={f.name} style={{ borderBottom: "1px solid #e2e8f0" }}>
                             <td style={{ padding: "8px", fontWeight: 700, color: "#1e3a8a" }}>
-                              <span style={{ background: "#eff6ff", border: "1px solid #bfdbfe", padding: "2px 6px", borderRadius: "4px" }}>
+                              <span
+                                onClick={() => handleOpenEditFacultyModal(f)}
+                                style={{
+                                  background: "#eff6ff",
+                                  border: "1px solid #bfdbfe",
+                                  padding: "3px 7px",
+                                  borderRadius: "4px",
+                                  cursor: "pointer",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "4px"
+                                }}
+                                title="Click to edit faculty code and full details"
+                              >
                                 {f.name}
+                                <span style={{ fontSize: "10px", color: "#2563eb" }}>✏️</span>
                               </span>
                             </td>
-                            <td style={{ padding: "8px", fontWeight: 600 }}>{f.fullName || f.name}</td>
-                            <td style={{ padding: "8px", color: "#64748b" }}>{f.maxDailyLectures || 4} hrs/day</td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <input
+                                type="text"
+                                value={f.fullName || f.name}
+                                onChange={(e) => handleUpdateFaculty(f.name, "fullName", e.target.value)}
+                                placeholder="Faculty Full Name"
+                                style={{
+                                  width: "100%",
+                                  padding: "4px 8px",
+                                  borderRadius: "4px",
+                                  border: "1px solid #cbd5e1",
+                                  fontWeight: 600,
+                                  fontSize: "12px",
+                                  color: "#0f172a",
+                                  background: "white",
+                                  boxSizing: "border-box"
+                                }}
+                                title="Edit faculty full name inline"
+                              />
+                            </td>
+                            <td style={{ padding: "8px" }}>
+                              <select
+                                value={f.designation || "Assistant Professor"}
+                                onChange={(e) => handleUpdateFaculty(f.name, "designation", e.target.value)}
+                                style={{ padding: "4px 6px", fontSize: "11.5px", borderRadius: "4px", border: "1px solid #cbd5e1", background: "#f8fafc", width: "100%", cursor: "pointer", fontWeight: 500 }}
+                                title="Change Post / Designation"
+                              >
+                                {FACULTY_DESIGNATIONS.map((d) => (
+                                  <option key={d} value={d}>{d}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td style={{ padding: "8px" }}>
+                              <select
+                                value={f.centralAuthority || "None"}
+                                onChange={(e) => handleUpdateFaculty(f.name, "centralAuthority", e.target.value)}
+                                style={{
+                                  padding: "4px 6px",
+                                  fontSize: "11.5px",
+                                  borderRadius: "4px",
+                                  border: (f.centralAuthority && f.centralAuthority !== "None") ? "1px solid #c084fc" : "1px solid #cbd5e1",
+                                  background: (f.centralAuthority && f.centralAuthority !== "None") ? "#faf5ff" : "#f8fafc",
+                                  color: (f.centralAuthority && f.centralAuthority !== "None") ? "#7e22ce" : "#475569",
+                                  fontWeight: (f.centralAuthority && f.centralAuthority !== "None") ? 700 : 500,
+                                  width: "100%",
+                                  cursor: "pointer"
+                                }}
+                                title="Change Central Authority (HOD, TPO, TPC, or None)"
+                              >
+                                {CENTRAL_AUTHORITIES.map((a) => (
+                                  <option key={a} value={a}>{a}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="6"
+                                  value={f.maxDailyLectures || 4}
+                                  onChange={(e) => handleUpdateFaculty(f.name, "maxDailyLectures", Number(e.target.value))}
+                                  style={{
+                                    width: "42px",
+                                    padding: "3px 4px",
+                                    borderRadius: "4px",
+                                    border: "1px solid #cbd5e1",
+                                    fontSize: "12px",
+                                    textAlign: "center",
+                                    fontWeight: 600,
+                                    background: "white"
+                                  }}
+                                  title="Max lecture hours per day"
+                                />
+                                <span style={{ fontSize: "11px", color: "#64748b" }}>h/d</span>
+                              </div>
+                            </td>
                             <td style={{ padding: "8px" }}>
                               {asgn.theorySubjects.length === 0 ? (
                                 <span style={{ color: "#94a3b8", fontSize: "11.5px" }}>None</span>
@@ -4471,7 +6511,27 @@ function MasterTimetable() {
                               </span>
                             </td>
                             <td style={{ padding: "8px", textAlign: "center" }}>
-                              <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
+                              <div style={{ display: "flex", gap: "5px", justifyContent: "center" }}>
+                                <button
+                                  type="button"
+                                  title={`Edit details, code, and name for ${f.name}`}
+                                  onClick={() => handleOpenEditFacultyModal(f)}
+                                  style={{
+                                    background: "#f0fdf4",
+                                    color: "#166534",
+                                    border: "1px solid #86efac",
+                                    padding: "3px 8px",
+                                    borderRadius: "4px",
+                                    cursor: "pointer",
+                                    fontWeight: 700,
+                                    fontSize: "11px",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "3px"
+                                  }}
+                                >
+                                  ✏️ Edit
+                                </button>
                                 <button
                                   type="button"
                                   title={`Transfer ${f.name}'s load to another teacher`}
@@ -4867,6 +6927,33 @@ function MasterTimetable() {
                   </button>
                 </form>
 
+                {/* Header and Quick Reset Bar for Year Courses */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", flexWrap: "wrap", gap: "8px" }}>
+                  <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#1e3a8a" }}>
+                    📖 {activeInputTab === "SY" ? "Second Year (S.E. / S.Y. B.Tech)" : (activeInputTab === "TY" ? "Third Year (T.E. / T.Y. B.Tech)" : "Final Year (B.Tech)")} Theory Course Allotments
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleResetYearFacultyAllotments(activeInputTab)}
+                    style={{
+                      background: "#eff6ff",
+                      color: "#1d4ed8",
+                      border: "1px solid #bfdbfe",
+                      borderRadius: "6px",
+                      padding: "5px 12px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px"
+                    }}
+                    title={`Keep all course details and classroom intact, but clear assigned teachers on ${activeInputTab} to allot fresh for this semester`}
+                  >
+                    🔄 Clear {activeInputTab === "SY" ? "S.E." : (activeInputTab === "TY" ? "T.E." : "B.Tech")} Faculty Allotments
+                  </button>
+                </div>
+
                 {/* Inline Editable Subject Table */}
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
@@ -4875,7 +6962,7 @@ function MasterTimetable() {
                         <th style={{ padding: "10px 8px", width: "110px" }}>Code</th>
                         <th style={{ padding: "10px 8px" }}>Subject Name</th>
                         <th style={{ padding: "10px 8px", width: "140px" }}>Weekly Lectures</th>
-                        <th style={{ padding: "10px 8px", width: "240px" }}>Assigned Faculty</th>
+                        <th style={{ padding: "10px 8px", width: "260px" }}>Assigned Faculty</th>
                         <th style={{ padding: "10px 8px", textAlign: "center", width: "90px" }}>Action</th>
                       </tr>
                     </thead>
@@ -4888,7 +6975,7 @@ function MasterTimetable() {
                         </tr>
                       ) : (
                         subjectsList.map((sub, idx) => (
-                          <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                          <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0", background: !sub.faculty?.name ? "#fffdf5" : "transparent" }}>
                             <td style={{ padding: "8px" }}>
                               <input
                                 type="text"
@@ -4937,25 +7024,42 @@ function MasterTimetable() {
                               </div>
                             </td>
                             <td style={{ padding: "8px" }}>
-                              <select
-                                value={sub.faculty?.name || ""}
-                                onChange={(e) => handleUpdateSubject(activeInputTab, idx, "faculty", e.target.value)}
-                                style={{
-                                  width: "100%",
-                                  padding: "6px 8px",
-                                  borderRadius: "4px",
-                                  border: "1px solid #cbd5e1",
-                                  fontWeight: 600,
-                                  color: "#1e40af"
-                                }}
-                              >
-                                <option value="">-- Select Faculty --</option>
-                                {inputs.faculties.map((f) => (
-                                  <option key={f.name} value={f.name}>
-                                    {f.name} - {f.fullName || f.name}
-                                  </option>
-                                ))}
-                              </select>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                <select
+                                  value={sub.faculty?.name || ""}
+                                  onChange={(e) => handleUpdateSubject(activeInputTab, idx, "faculty", e.target.value)}
+                                  style={{
+                                    flex: 1,
+                                    padding: "6px 8px",
+                                    borderRadius: "4px",
+                                    border: !sub.faculty?.name ? "1.5px solid #f59e0b" : "1px solid #cbd5e1",
+                                    background: !sub.faculty?.name ? "#fffbeb" : "#ffffff",
+                                    fontWeight: 600,
+                                    color: !sub.faculty?.name ? "#b45309" : "#1e40af"
+                                  }}
+                                >
+                                  <option value="">-- Select Faculty --</option>
+                                  {inputs.faculties.map((f) => (
+                                    <option key={f.name} value={f.name}>
+                                      {f.name} - {f.fullName || f.name} ({f.designation || "Assistant Professor"})
+                                    </option>
+                                  ))}
+                                </select>
+                                {!sub.faculty?.name && (
+                                  <span style={{
+                                    background: "#fef3c7",
+                                    color: "#b45309",
+                                    border: "1px solid #fde68a",
+                                    padding: "3px 6px",
+                                    borderRadius: "4px",
+                                    fontSize: "10.5px",
+                                    fontWeight: 700,
+                                    whiteSpace: "nowrap"
+                                  }}>
+                                    ⚠️ Unallotted
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td style={{ padding: "8px", textAlign: "center" }}>
                               <button
@@ -6101,11 +8205,18 @@ function MasterTimetable() {
                   <select
                     value={newExtPeriod}
                     onChange={(e) => setNewExtPeriod(e.target.value)}
-                    style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", width: "120px" }}
+                    style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", minWidth: "220px", fontWeight: 600 }}
                   >
-                    {periods.map((p, idx) => (
-                      <option key={p} value={p}>Period {p} ({periodTimings[idx]})</option>
-                    ))}
+                    <optgroup label="2-Hour Continuous Slots (Recommended for FY)">
+                      <option value="P1-P2">10:00 AM - 12:00 PM (P1-P2: 2 Hours)</option>
+                      <option value="P3-P4">12:45 PM - 02:45 PM (P3-P4: 2 Hours)</option>
+                      <option value="P5-P6">03:00 PM - 05:00 PM (P5-P6: 2 Hours)</option>
+                    </optgroup>
+                    <optgroup label="Single 1-Hour Lecture Slots">
+                      {periods.map((p, idx) => (
+                        <option key={p} value={p}>Period {p} ({periodTimings[idx]})</option>
+                      ))}
+                    </optgroup>
                   </select>
 
                   <input
@@ -6128,28 +8239,47 @@ function MasterTimetable() {
                         <th style={{ padding: "6px 8px" }}>Type</th>
                         <th style={{ padding: "6px 8px" }}>Faculty</th>
                         <th style={{ padding: "6px 8px" }}>Day & Slot</th>
+                        <th style={{ padding: "6px 8px" }}>Duration</th>
                         <th style={{ padding: "6px 8px" }}>Description</th>
                         <th style={{ padding: "6px 8px", textAlign: "center" }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {(inputs.externalLoads || []).map((ext, idx) => (
-                        <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                          <td style={{ padding: "6px 8px", fontWeight: 700, color: "#b45309" }}>{ext.loadType}</td>
-                          <td style={{ padding: "6px 8px", fontWeight: 600, color: "#1e40af" }}>{ext.facultyCode}</td>
-                          <td style={{ padding: "6px 8px" }}>{ext.day} P{ext.period} ({periodTimings[ext.period - 1]})</td>
-                          <td style={{ padding: "6px 8px" }}>{ext.description}</td>
-                          <td style={{ padding: "6px 8px", textAlign: "center" }}>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteExternalLoad(idx)}
-                              style={{ background: "#fee2e2", color: "#dc2626", border: "none", padding: "3px 6px", borderRadius: "4px", cursor: "pointer", fontWeight: 600 }}
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {(inputs.externalLoads || []).map((ext, idx) => {
+                        const dur = getExternalLoadPeriods(ext).length;
+                        return (
+                          <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                            <td style={{ padding: "6px 8px", fontWeight: 700, color: "#b45309" }}>{ext.loadType}</td>
+                            <td style={{ padding: "6px 8px", fontWeight: 600, color: "#1e40af" }}>{ext.facultyCode}</td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <span style={{ fontWeight: 600 }}>{ext.day}</span>: {formatExternalLoadSlot(ext)}
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <span style={{
+                                display: "inline-block",
+                                padding: "2px 8px",
+                                borderRadius: "10px",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                background: dur > 1 ? "#dbeafe" : "#f1f5f9",
+                                color: dur > 1 ? "#1e40af" : "#475569"
+                              }}>
+                                {dur} Hour{dur > 1 ? "s" : ""} / wk
+                              </span>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>{ext.description}</td>
+                            <td style={{ padding: "6px 8px", textAlign: "center" }}>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteExternalLoad(idx)}
+                                style={{ background: "#fee2e2", color: "#dc2626", border: "none", padding: "3px 6px", borderRadius: "4px", cursor: "pointer", fontWeight: 600 }}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -6362,8 +8492,16 @@ function MasterTimetable() {
       {/* Main Master Table */}
       {selectedView === "ALL" && (
         <div className="master-table-card">
-        <div className="table-responsive">
-          <table className="master-table">
+          {/* Official Institutional Header for Master Class Timetable */}
+          <div className="official-master-sheet-header" style={{ textAlign: "center", padding: "12px 14px", borderBottom: "1.5px solid #000000", background: "#ffffff", color: "#000000" }}>
+            <div style={{ fontSize: "14px", fontWeight: 700, letterSpacing: "0.5px" }}>K.E.Society's</div>
+            <div style={{ fontSize: "16px", fontWeight: 800, marginTop: "2px" }}>Rajarambapu Institute of Technology ,Rajaramnagar</div>
+            <div style={{ fontSize: "14px", fontWeight: 700, marginTop: "2px", textDecoration: "underline" }}>Department of Information Technology</div>
+            <div style={{ fontSize: "15px", fontWeight: 800, marginTop: "2px", textDecoration: "underline" }}>Master Class Time Table</div>
+            <div style={{ fontSize: "13px", fontWeight: 700, marginTop: "2px" }}>{academicSession}/ {academicSemester}</div>
+          </div>
+          <div className="table-responsive">
+            <table className="master-table">
             <thead>
               {/* Top Column Groups */}
               <tr className="header-group-row">
@@ -6508,415 +8646,758 @@ function MasterTimetable() {
       )}
 
       {/* =========================================================================
-          PERSPECTIVE 1: STUDENT CLASS VIEW (SY, TY, B.TECH)
+          PERSPECTIVE 1: STUDENT CLASS VIEW (OFFICIAL INSTITUTIONAL PRINT VIEW & MODERN)
           ========================================================================= */}
       {selectedView === "CLASS" && (
         <div className="class-view-container">
-          {/* Class Meta Banner */}
-          <div className="perspective-header-card">
-            <div className="perspective-meta-item">
-              <span>Academic Class</span>
-              <strong style={{ fontSize: "15px", color: "#1e3a8a" }}>
-                {selectedClassYear === "SY" ? "Second Year (S.Y. B.Tech) - Sem-III" : (selectedClassYear === "TY" ? "Third Year (T.Y. B.Tech) - Sem-V" : "Final Year (B.Tech) - Sem-VII")}
-              </strong>
+          {/* Class View Header Controls Bar */}
+          <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "13px", fontWeight: 700, color: "#1e3a8a" }}>
+                Class View Mode:
+              </span>
+              <button
+                type="button"
+                className={`sub-view-btn ${classPrintViewMode === "OFFICIAL" ? "active" : ""}`}
+                onClick={() => setClassPrintViewMode("OFFICIAL")}
+                style={{
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  background: classPrintViewMode === "OFFICIAL" ? "#2563eb" : "#f1f5f9",
+                  color: classPrintViewMode === "OFFICIAL" ? "white" : "#334155",
+                  borderColor: classPrintViewMode === "OFFICIAL" ? "#1d4ed8" : "#cbd5e1"
+                }}
+              >
+                📜 Official Institutional Print View
+              </button>
+              <button
+                type="button"
+                className={`sub-view-btn ${classPrintViewMode === "MODERN" ? "active" : ""}`}
+                onClick={() => setClassPrintViewMode("MODERN")}
+                style={{
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  background: classPrintViewMode === "MODERN" ? "#2563eb" : "#f1f5f9",
+                  color: classPrintViewMode === "MODERN" ? "white" : "#334155",
+                  borderColor: classPrintViewMode === "MODERN" ? "#1d4ed8" : "#cbd5e1"
+                }}
+              >
+                ⚙️ Interactive Schedule Grid
+              </button>
             </div>
-            <div className="perspective-meta-item">
-              <span>Designated Classroom</span>
-              <strong style={{ color: "#16a34a", fontSize: "15px" }}>{getClassroom(selectedClassYear)}</strong>
-            </div>
-            <div className="perspective-meta-item">
-              <span>Class Coordinator</span>
-              <strong>{getClassCoordinator(selectedClassYear)}</strong>
-            </div>
-            <div className="perspective-meta-item">
-              <span>Weekly Contact Hours</span>
-              <strong style={{ color: "#0f172a" }}>
-                {masterData?.totalContactHours?.[selectedClassYear] || (selectedClassYear === "SY" ? 28 : (selectedClassYear === "TY" ? 27 : 25))} Hours
-              </strong>
+
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => handleExportCurrentClassExcel(selectedClassYear)}
+                style={{
+                  background: "#10b981",
+                  color: "white",
+                  borderColor: "#059669",
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  padding: "6px 12px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  borderRadius: "6px",
+                  cursor: "pointer"
+                }}
+                title={`Download ${selectedClassYear} ${getSemesterForYear(selectedClassYear, academicSemester)} Timetable (.xlsx)`}
+              >
+                📥 Download Excel (.xlsx)
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => window.print()}
+                style={{ fontSize: "12px", padding: "6px 14px", display: "inline-flex", alignItems: "center", gap: "5px" }}
+              >
+                🖨️ Print Class Timetable
+              </button>
             </div>
           </div>
 
-          {/* Single Class Weekly Timetable Grid */}
-          <div className="horizontal-schedule-card">
-            <div className="table-responsive">
-              <table className="horizontal-schedule-table">
-                <thead>
-                  <tr>
-                    <th className="th-day">Day</th>
-                    <th>Period 1<div className="th-time">10:00 To 11:00</div></th>
-                    <th>Period 2<div className="th-time">11:00 To 12:00</div></th>
-                    <th className="th-break" title="Recess (12:00 To 12:45)"></th>
-                    <th>Period 3<div className="th-time">12:45 To 01:45</div></th>
-                    <th>Period 4<div className="th-time">01:45 To 02:45</div></th>
-                    <th className="th-break" title="Recess (02:45 To 03:00)"></th>
-                    <th>Period 5<div className="th-time">03:00 To 04:00</div></th>
-                    <th>Period 6<div className="th-time">04:00 To 05:00</div></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {days.map((day, dIdx) => (
-                    <tr key={day}>
-                      <td className="day-label-cell">
-                        {day.charAt(0) + day.slice(1).toLowerCase()}
-                      </td>
-                      {renderClassSlot(selectedClassYear, day, 1)}
-                      {renderClassSlot(selectedClassYear, day, 2)}
-                      {dIdx === 0 && (
-                        <td rowSpan="5" className="break-col-cell">
-                          <span className="vertical-break-text">RECESS</span>
-                        </td>
-                      )}
-                      {renderClassSlot(selectedClassYear, day, 3)}
-                      {renderClassSlot(selectedClassYear, day, 4)}
-                      {dIdx === 0 && (
-                        <td rowSpan="5" className="break-col-cell">
-                          <span className="vertical-break-text">RECESS</span>
-                        </td>
-                      )}
-                      {renderClassSlot(selectedClassYear, day, 5)}
-                      {renderClassSlot(selectedClassYear, day, 6)}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Course Reference & Faculty Index Cards */}
-          {(() => {
-            const classIndex = computeClassIndex(selectedClassYear);
-
-            return (
-              <div className="course-index-container">
-                {/* Theory Courses Card */}
-                <div className="index-card">
-                  <h4>📘 Theory Courses & Faculty In-charge</h4>
-                  <table className="index-table">
-                    <thead>
-                      <tr>
-                        <th>Code</th>
-                        <th>Course Title</th>
-                        <th>Assigned Faculty</th>
-                        <th style={{ textAlign: "center" }}>Code</th>
-                        <th style={{ textAlign: "center" }}>Hrs/Wk</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(classIndex.theorySubjects || []).map((sub, idx) => (
-                        <tr key={idx}>
-                          <td style={{ fontWeight: 700, color: "#1e3a8a" }}>{sub.code}</td>
-                          <td>{sub.name}</td>
-                          <td>{getFacultyFullName(sub.faculty?.name)}</td>
-                          <td style={{ textAlign: "center", fontWeight: 700 }}>{sub.faculty?.name}</td>
-                          <td style={{ textAlign: "center", fontWeight: 700 }}>{sub.weeklyPeriods || 3}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+          {/* OFFICIAL INSTITUTIONAL PRINT VIEW (Exact match to uploaded benchmark document) */}
+          <div className={`official-class-sheet-wrapper ${classPrintViewMode === "MODERN" ? "only-print" : ""}`} style={{ marginBottom: "25px" }}>
+            <div className="official-timetable-sheet" style={{ background: "#ffffff", color: "#000000", border: "2px solid #000000", margin: "0 auto 20px", maxWidth: "1100px", fontFamily: "Arial, sans-serif" }}>
+              {/* Official Institutional Header */}
+              <div className="official-sheet-header" style={{ position: "relative", padding: "10px 14px", borderBottom: "1.5px solid #000000", textAlign: "center", lineHeight: "1.35" }}>
+                <div style={{ position: "absolute", top: "14px", right: "20px", fontSize: "14px", fontStyle: "italic", fontWeight: 700 }}>
+                  Class:- {selectedClassYear === "SY" ? "S. Y. IT." : (selectedClassYear === "TY" ? "T. Y. IT." : "Final Year B. Tech. IT.")}
                 </div>
-
-                {/* Practical Labs Card */}
-                <div className="index-card">
-                  <h4>🔬 Laboratory Practicals & Batches</h4>
-                  <table className="index-table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: "22%" }}>Lab Course</th>
-                        <th style={{ width: "32%" }}>Faculty In-charge</th>
-                        <th style={{ width: "14%", textAlign: "center" }}>Lab Room</th>
-                        <th style={{ width: "20%" }}>Batches</th>
-                        <th style={{ width: "12%", textAlign: "center" }}>Hrs/Wk</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(classIndex.practicalList || []).map((p, idx) => (
-                        <tr key={idx}>
-                          <td style={{ fontWeight: 700, color: "#7e22ce" }}>{p.subjectCode}</td>
-                          <td>{getFacultyFullName(p.facultyCode)} ({p.facultyCode})</td>
-                          <td style={{ textAlign: "center", fontWeight: 700, color: "#059669" }}>
-                            <span style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", padding: "2px 7px", borderRadius: "4px", fontSize: "11px" }}>
-                              {p.room}
-                            </span>
-                          </td>
-                          <td>
-                            <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                              {p.batches.map((b) => (
-                                <span key={b} style={{ background: "#f5f3ff", border: "1px solid #ddd6fe", color: "#6b21a8", padding: "1px 6px", borderRadius: "4px", fontSize: "10.5px", fontWeight: 700 }}>
-                                  {b}
-                                </span>
-                              ))}
-                            </div>
-                          </td>
-                          <td style={{ textAlign: "center", fontWeight: 700 }}>{p.weeklyHours}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Institutional Fixed Slots */}
-                {classIndex.fixedSlots && classIndex.fixedSlots.length > 0 && (
-                  <div className="index-card">
-                    <h4>🏛 Institutional & Co-Curricular Slots</h4>
-                    <table className="index-table">
-                      <thead>
-                        <tr>
-                          <th>Activity / Course</th>
-                          <th>Faculty / Mentor</th>
-                          <th>Time Slot</th>
-                          <th style={{ textAlign: "center" }}>Room</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {classIndex.fixedSlots.map((fs, idx) => (
-                          <tr key={idx}>
-                            <td style={{ fontWeight: 700, color: "#b45309" }}>{fs.courseName}</td>
-                            <td>{fs.facultyName ? `${getFacultyFullName(fs.facultyName)} (${fs.facultyName})` : "Department Faculty"}</td>
-                            <td>{fs.day} Period {fs.period}</td>
-                            <td style={{ textAlign: "center", fontWeight: 700 }}>{fs.room || getClassroom(selectedClassYear)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                <div style={{ fontSize: "14.5px", fontWeight: 700, letterSpacing: "0.5px" }}>K.E.Society's</div>
+                <div style={{ fontSize: "15px", fontWeight: 700, marginTop: "2px" }}>Rajarambapu Institute of Technology,Rajaramnagar</div>
+                <div style={{ fontSize: "14px", fontWeight: 700, marginTop: "2px", textDecoration: "underline" }}>Department of Information Technology</div>
+                <div style={{ fontSize: "14px", fontWeight: 700, marginTop: "2px", textDecoration: "underline" }}>Class Time Table</div>
+                <div style={{ fontSize: "13px", fontWeight: 700, marginTop: "2px" }}>{academicSession}-{academicSemester}</div>
               </div>
-            );
-          })()}
+
+              {/* Coordinator & Contact Hours Sub-Header */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 14px", borderBottom: "1.5px solid #000000", fontSize: "12px", fontWeight: 700 }}>
+                <div>Class Cordinator: {selectedClassYear === "SY" ? "Ms.T.N.Kamble" : getClassCoordinator(selectedClassYear)}</div>
+                <div>Total Contact Hrs : {masterData?.totalContactHours?.[selectedClassYear] || 26}</div>
+              </div>
+
+              {/* 20-Column Official Weekly Grid */}
+              <div className="table-responsive">
+                <table className="official-grid-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", tableLayout: "fixed", color: "#000000" }}>
+                  <thead>
+                    <tr>
+                      <th rowSpan="2" style={{ width: "35px", verticalAlign: "middle", border: "1px solid #000000", background: "#ffffff", padding: "2px" }}>
+                        <div style={{ fontSize: "12px", fontWeight: 800 }}>
+                          {selectedClassYear === "BTECH" ? "B.Tech" : selectedClassYear}
+                        </div>
+                        <div style={{ borderTop: "1px solid #000000", paddingTop: "2px", fontSize: "10px" }}>Sr.No</div>
+                      </th>
+                      <th rowSpan="2" style={{ width: "80px", verticalAlign: "middle", fontSize: "11px", border: "1px solid #000000", background: "#ffffff", padding: "2px" }}>Time</th>
+                      <th colSpan="3" style={{ fontSize: "12px", border: "1px solid #000000", background: "#ffffff", padding: "4px 2px" }}>Monday</th>
+                      <th colSpan="3" style={{ fontSize: "12px", border: "1px solid #000000", background: "#ffffff", padding: "4px 2px" }}>Tuesday</th>
+                      <th colSpan="3" style={{ fontSize: "12px", border: "1px solid #000000", background: "#ffffff", padding: "4px 2px" }}>Wedensday</th>
+                      <th colSpan="3" style={{ fontSize: "12px", border: "1px solid #000000", background: "#ffffff", padding: "4px 2px" }}>Thursday</th>
+                      <th colSpan="3" style={{ fontSize: "12px", border: "1px solid #000000", background: "#ffffff", padding: "4px 2px" }}>Friday</th>
+                      <th colSpan="3" style={{ fontSize: "12px", border: "1px solid #000000", background: "#ffffff", padding: "4px 2px" }}>Saturday</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Period 1 & 2 */}
+                    {renderOfficialClassBlockRowPair(1, 2, "1.", "10.00\nto\n11.00", "2.", "11.00\nto\n12.00", selectedClassYear)}
+
+                    {/* Lunch Break Row */}
+                    <tr className="break-row-official">
+                      <td colSpan="2" style={{ fontWeight: 700, fontSize: "11px", whiteSpace: "nowrap", border: "1px solid #000000", padding: "4px" }}>
+                        12:00 To 12:45
+                      </td>
+                      <td colSpan="18" style={{ fontWeight: 700, letterSpacing: "1px", padding: "5px", border: "1px solid #000000", textAlign: "center" }}>
+                        Lunch Break
+                      </td>
+                    </tr>
+
+                    {/* Period 3 & 4 */}
+                    {renderOfficialClassBlockRowPair(3, 4, "3.", "12.45\nto\n01.45", "4.", "01.45\nto\n02.45", selectedClassYear)}
+
+                    {/* Recess Row */}
+                    <tr className="break-row-official">
+                      <td colSpan="2" style={{ fontWeight: 700, fontSize: "11px", whiteSpace: "nowrap", border: "1px solid #000000", padding: "4px" }}>
+                        02:45 To 03:00
+                      </td>
+                      <td colSpan="18" style={{ fontWeight: 700, letterSpacing: "1px", padding: "5px", border: "1px solid #000000", textAlign: "center" }}>
+                        Recess
+                      </td>
+                    </tr>
+
+                    {/* Period 5 & 6 */}
+                    {renderOfficialClassBlockRowPair(5, 6, "5.", "03.00\nto\n04.00", "6.", "04.00\nto\n05.00", selectedClassYear)}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Institutional Signatures */}
+              <div className="official-sheet-footer" style={{ display: "flex", justifyContent: "space-between", padding: "16px 60px 12px", borderTop: "1.5px solid #000000", marginTop: "10px" }}>
+                <div style={{ textAlign: "center", minWidth: "200px" }}>
+                  <div style={{ fontWeight: 700, fontSize: "13px" }}>Time Table Incharge</div>
+                  <div style={{ marginTop: "16px", fontSize: "12.5px", fontWeight: 600 }}>Mrs.R.S.Patil</div>
+                </div>
+                <div style={{ textAlign: "center", minWidth: "200px" }}>
+                  <div style={{ fontWeight: 700, fontSize: "13px" }}>HOD</div>
+                  <div style={{ marginTop: "16px", fontSize: "12.5px", fontWeight: 600 }}>Dr.A.C.Adamuthe</div>
+                </div>
+              </div>
+
+              {/* Course & Teacher Reference Index Tables */}
+              {(() => {
+                const { courses, teachers } = getOfficialClassIndex(selectedClassYear);
+                return (
+                  <div style={{ display: "flex", gap: "20px", padding: "10px 14px", borderTop: "1px solid #000000", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap" }}>
+                    {/* Course Index */}
+                    <div style={{ flex: "1 1 50%", minWidth: "300px" }}>
+                      <div style={{ fontSize: "11px", fontWeight: 700, marginBottom: "4px" }}>*NB- New Building</div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", border: "1px solid #000000" }}>
+                        <thead>
+                          <tr style={{ background: "#f8fafc" }}>
+                            <th style={{ border: "1px solid #000000", padding: "3px 6px", textAlign: "left", width: "35%" }}>Abbrv. of Course</th>
+                            <th style={{ border: "1px solid #000000", padding: "3px 6px", textAlign: "left" }}>Full Name of Course</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {courses.map((c, idx) => (
+                            <tr key={idx}>
+                              <td style={{ border: "1px solid #000000", padding: "2px 6px", fontWeight: 700 }}>{c.abbr}</td>
+                              <td style={{ border: "1px solid #000000", padding: "2px 6px" }}>{c.name}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Teacher Index */}
+                    <div style={{ flex: "1 1 45%", minWidth: "280px" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", border: "1px solid #000000", marginTop: "18px" }}>
+                        <thead>
+                          <tr style={{ background: "#f8fafc" }}>
+                            <th style={{ border: "1px solid #000000", padding: "3px 6px", textAlign: "left", width: "35%" }}>Abbrv. of Teacher</th>
+                            <th style={{ border: "1px solid #000000", padding: "3px 6px", textAlign: "left" }}>Full Name of Teacher</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {teachers.map((t, idx) => (
+                            <tr key={idx}>
+                              <td style={{ border: "1px solid #000000", padding: "2px 6px", fontWeight: 700 }}>{t.abbr}</td>
+                              <td style={{ border: "1px solid #000000", padding: "2px 6px" }}>{t.name}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* MODERN INTERACTIVE SCHEDULE GRID (Only displayed when modern mode is toggled) */}
+          {classPrintViewMode === "MODERN" && (
+            <div className="no-print">
+              {/* Class Meta Banner */}
+              <div className="perspective-header-card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "center" }}>
+                  <div className="perspective-meta-item">
+                    <span>Academic Class & Semester</span>
+                    <strong style={{ fontSize: "15px", color: "#1e3a8a" }}>
+                      {selectedClassYear === "SY" ? `Second Year (S.Y. B.Tech) — ${academicSemester === "PART-I" ? "Sem-III" : "Sem-IV"}` : (selectedClassYear === "TY" ? `Third Year (T.Y. B.Tech) — ${academicSemester === "PART-I" ? "Sem-V" : "Sem-VI"}` : `Final Year (B.Tech) — ${academicSemester === "PART-I" ? "Sem-VII" : "Sem-VIII"}`)}
+                    </strong>
+                    <div style={{ fontSize: "11.5px", color: "#64748b", fontWeight: 600, marginTop: "2px" }}>
+                      Session: <strong>{academicSession}</strong> | Term: <strong>{academicSemester}</strong>
+                    </div>
+                  </div>
+                  <div className="perspective-meta-item">
+                    <span>Designated Classroom</span>
+                    <strong style={{ color: "#16a34a", fontSize: "15px" }}>{getClassroom(selectedClassYear)}</strong>
+                  </div>
+                  <div className="perspective-meta-item">
+                    <span>Class Coordinator</span>
+                    <strong>{getClassCoordinator(selectedClassYear)}</strong>
+                  </div>
+                  <div className="perspective-meta-item">
+                    <span>Weekly Contact Hours</span>
+                    <strong style={{ color: "#0f172a" }}>
+                      {masterData?.totalContactHours?.[selectedClassYear] || (selectedClassYear === "SY" ? 28 : (selectedClassYear === "TY" ? 27 : 25))} Hours
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Single Class Weekly Timetable Grid */}
+              <div className="horizontal-schedule-card">
+                <div className="table-responsive">
+                  <table className="horizontal-schedule-table">
+                    <thead>
+                      <tr>
+                        <th className="th-day">Day</th>
+                        <th>Period 1<div className="th-time">10:00 To 11:00</div></th>
+                        <th>Period 2<div className="th-time">11:00 To 12:00</div></th>
+                        <th className="th-break" title="Recess (12:00 To 12:45)"></th>
+                        <th>Period 3<div className="th-time">12:45 To 01:45</div></th>
+                        <th>Period 4<div className="th-time">01:45 To 02:45</div></th>
+                        <th className="th-break" title="Recess (02:45 To 03:00)"></th>
+                        <th>Period 5<div className="th-time">03:00 To 04:00</div></th>
+                        <th>Period 6<div className="th-time">04:00 To 05:00</div></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {days.map((day, dIdx) => (
+                        <tr key={day}>
+                          <td className="day-label-cell">
+                            {day.charAt(0) + day.slice(1).toLowerCase()}
+                          </td>
+                          {renderClassSlot(selectedClassYear, day, 1)}
+                          {renderClassSlot(selectedClassYear, day, 2)}
+                          {dIdx === 0 && (
+                            <td rowSpan="5" className="break-col-cell">
+                              <span className="vertical-break-text">RECESS</span>
+                            </td>
+                          )}
+                          {renderClassSlot(selectedClassYear, day, 3)}
+                          {renderClassSlot(selectedClassYear, day, 4)}
+                          {dIdx === 0 && (
+                            <td rowSpan="5" className="break-col-cell">
+                              <span className="vertical-break-text">RECESS</span>
+                            </td>
+                          )}
+                          {renderClassSlot(selectedClassYear, day, 5)}
+                          {renderClassSlot(selectedClassYear, day, 6)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Course Reference & Faculty Index Cards */}
+              {(() => {
+                const classIndex = computeClassIndex(selectedClassYear);
+
+                return (
+                  <div className="course-index-container">
+                    {/* Theory Courses Card */}
+                    <div className="index-card">
+                      <h4>📘 Theory Courses & Faculty In-charge</h4>
+                      <table className="index-table">
+                        <thead>
+                          <tr>
+                            <th>Code</th>
+                            <th>Course Title</th>
+                            <th>Assigned Faculty</th>
+                            <th style={{ textAlign: "center" }}>Code</th>
+                            <th style={{ textAlign: "center" }}>Hrs/Wk</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(classIndex.theorySubjects || []).map((sub, idx) => (
+                            <tr key={idx}>
+                              <td style={{ fontWeight: 700, color: "#1e3a8a" }}>{sub.code}</td>
+                              <td>{sub.name}</td>
+                              <td>{getFacultyFullName(sub.faculty?.name)}</td>
+                              <td style={{ textAlign: "center", fontWeight: 700 }}>{sub.faculty?.name}</td>
+                              <td style={{ textAlign: "center", fontWeight: 700 }}>{sub.weeklyPeriods || 3}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Practical Labs Card */}
+                    <div className="index-card">
+                      <h4>🔬 Laboratory Practicals & Batches</h4>
+                      <table className="index-table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: "22%" }}>Lab Course</th>
+                            <th style={{ width: "32%" }}>Faculty In-charge</th>
+                            <th style={{ width: "14%", textAlign: "center" }}>Lab Room</th>
+                            <th style={{ width: "20%" }}>Batches</th>
+                            <th style={{ width: "12%", textAlign: "center" }}>Hrs/Wk</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(classIndex.practicalList || []).map((p, idx) => (
+                            <tr key={idx}>
+                              <td style={{ fontWeight: 700, color: "#7e22ce" }}>{p.subjectCode}</td>
+                              <td>{getFacultyFullName(p.facultyCode)} ({p.facultyCode})</td>
+                              <td style={{ textAlign: "center", fontWeight: 700, color: "#059669" }}>
+                                <span style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", padding: "2px 7px", borderRadius: "4px", fontSize: "11px" }}>
+                                  {p.room}
+                                </span>
+                              </td>
+                              <td>
+                                <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                                  {p.batches.map((b) => (
+                                    <span key={b} style={{ background: "#f5f3ff", border: "1px solid #ddd6fe", color: "#6b21a8", padding: "1px 6px", borderRadius: "4px", fontSize: "10.5px", fontWeight: 700 }}>
+                                      {b}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                              <td style={{ textAlign: "center", fontWeight: 700 }}>{p.weeklyHours}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Institutional Fixed Slots */}
+                    {classIndex.fixedSlots && classIndex.fixedSlots.length > 0 && (
+                      <div className="index-card">
+                        <h4>🏛 Institutional & Co-Curricular Slots</h4>
+                        <table className="index-table">
+                          <thead>
+                            <tr>
+                              <th>Activity / Course</th>
+                              <th>Faculty / Mentor</th>
+                              <th>Time Slot</th>
+                              <th style={{ textAlign: "center" }}>Room</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {classIndex.fixedSlots.map((fs, idx) => (
+                              <tr key={idx}>
+                                <td style={{ fontWeight: 700, color: "#b45309" }}>{fs.courseName}</td>
+                                <td>{fs.facultyName ? `${getFacultyFullName(fs.facultyName)} (${fs.facultyName})` : "Department Faculty"}</td>
+                                <td>{fs.day} Period {fs.period}</td>
+                                <td style={{ textAlign: "center", fontWeight: 700 }}>{fs.room || getClassroom(selectedClassYear)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
         </div>
       )}
 
       {/* =========================================================================
-          PERSPECTIVE 2: FACULTY PERSONAL TIMETABLES
+          PERSPECTIVE 2: FACULTY PERSONAL TIMETABLES (OFFICIAL RIT FORMAT & MODERN)
           ========================================================================= */}
       {selectedView === "FACULTY" && (
         <div className="faculty-view-container">
           {(() => {
             const facSched = computeFacultySchedule(selectedFaculty);
             const maxCap = getFacultyMaxDaily(selectedFaculty);
+            const asgn = getFacultyAssignments(selectedFaculty);
+
+            const ugL = facSched.stats.theoryHours || 0;
+            const ugPR = facSched.stats.practicalHours || 0;
+            const ugCAP = asgn.fixedSlots?.filter((f) => (f.course || "").includes("Capstone")).length * 2 || (selectedFaculty === "SUM" ? 4 : 0);
+            const ugMP = asgn.fixedSlots?.filter((f) => (f.course || "").includes("Mentoring") || (f.course || "").includes("Project")).length * 2 || (selectedFaculty === "SUM" ? 6 : 0);
+            const pgL = (asgn.externalLoads || []).length > 0 ? (asgn.externalLoads.length) : (selectedFaculty === "SUM" ? 2 : 0);
+            const totalWorkload = facSched.stats.totalHours || (ugL + ugPR + ugCAP + ugMP + pgL);
 
             return (
               <>
-                {/* Faculty Meta Banner */}
-                <div className="perspective-header-card">
-                  <div className="perspective-meta-item">
-                    <span>Faculty Member</span>
-                    <strong style={{ fontSize: "16px", color: "#1e3a8a" }}>
-                      {getFacultyFullName(selectedFaculty)}
-                    </strong>
+                {/* Control & Mode Switcher Bar */}
+                <div className="sub-view-bar no-print" style={{ marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                    <span className="sub-view-label">Display Mode:</span>
+                    <button
+                      type="button"
+                      className={`sub-view-btn ${facultyPrintViewMode === "OFFICIAL" ? "active" : ""}`}
+                      onClick={() => setFacultyPrintViewMode("OFFICIAL")}
+                      style={{ fontWeight: 700 }}
+                    >
+                      📋 Official Institutional Print View (RIT Image Format)
+                    </button>
+                    <button
+                      type="button"
+                      className={`sub-view-btn ${facultyPrintViewMode === "MODERN" ? "active" : ""}`}
+                      onClick={() => setFacultyPrintViewMode("MODERN")}
+                      style={{ fontWeight: 700 }}
+                    >
+                      📊 Modern Analytics View
+                    </button>
                   </div>
-                  <div className="perspective-meta-item">
-                    <span>Short Code</span>
-                    <strong style={{ fontSize: "15px" }}>{selectedFaculty}</strong>
-                  </div>
-                  <div className="perspective-meta-item">
-                    <span>Designation & Department</span>
-                    <strong>Faculty / Department of Information Technology</strong>
-                  </div>
-                  <div className="perspective-meta-item">
-                    <span>Configured Max Daily Workload</span>
-                    <strong>{maxCap} Lectures / Day Max Cap</strong>
+
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                    <select
+                      value={academicSession}
+                      onChange={(e) => setAcademicSession(e.target.value)}
+                      style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: 700 }}
+                      title="Select Academic Year Session"
+                    >
+                      <option value="2026-27">2026-27</option>
+                      <option value="2025-26">2025-26</option>
+                      <option value="2024-25">2024-25</option>
+                    </select>
+
+                    <select
+                      value={academicSemester}
+                      onChange={(e) => setAcademicSemester(e.target.value)}
+                      style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: 700 }}
+                      title="Select Academic Term"
+                    >
+                      <option value="PART-I">PART-I (Odd Semester)</option>
+                      <option value="PART-II">PART-II (Even Semester)</option>
+                    </select>
+
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => {
+                        const facObj = (inputs.faculties || []).find((f) => f.name === selectedFaculty);
+                        exportPersonalTimetableToExcel({
+                          facultyCode: selectedFaculty,
+                          facultyName: getFacultyFullName(selectedFaculty),
+                          designation: facObj?.designation || "Assistant Professor",
+                          centralAuthority: facObj?.centralAuthority || "None",
+                          academicSession,
+                          academicSemester,
+                          facSched,
+                          assignments: asgn,
+                          days
+                        });
+                      }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "6px 12px", fontSize: "12px", background: "#16a34a", borderColor: "#15803d" }}
+                      title="Save Personal Timetable directly to Excel file (.xlsx)"
+                    >
+                      📥 Download Excel (.xlsx)
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => window.print()}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "6px 12px", fontSize: "12px" }}
+                      title="Print official personal timetable"
+                    >
+                      🖨️ Print Timetable
+                    </button>
                   </div>
                 </div>
 
-                {/* Faculty Workload Analytics Card */}
-                <div className="analytics-grid">
-                  <div className="analytics-card">
-                    <span className="analytics-title">Total Assigned Load</span>
-                    <span className="analytics-value">{facSched.stats.totalHours} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs/Wk</span></span>
-                    <span className="analytics-sub">Across All Academic Years</span>
-                  </div>
-                  <div className="analytics-card">
-                    <span className="analytics-title">Core Theory Lectures</span>
-                    <span className="analytics-value" style={{ color: "#2563eb" }}>{facSched.stats.theoryHours} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs</span></span>
-                    <span className="analytics-sub">SY, TY & B.Tech Classes</span>
-                  </div>
-                  <div className="analytics-card">
-                    <span className="analytics-title">Laboratory Practicals</span>
-                    <span className="analytics-value" style={{ color: "#7e22ce" }}>{facSched.stats.practicalHours} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs</span></span>
-                    <span className="analytics-sub">Practical Batch Sessions</span>
-                  </div>
-                  <div className="analytics-card">
-                    <span className="analytics-title">FY University External</span>
-                    <span className="analytics-value" style={{ color: "#b45309" }}>{facSched.stats.externalHours} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs</span></span>
-                    <span className="analytics-sub">EEDP, PPS & PCC Loads</span>
-                  </div>
-                  <div className="analytics-card">
-                    <span className="analytics-title">Daily Workload Balance</span>
-                    <div style={{ display: "flex", gap: "6px", marginTop: "4px", flexWrap: "wrap" }}>
-                      {["Mon", "Tue", "Wed", "Thu", "Fri"].map((dShort, idx) => {
-                        const fullD = days[idx];
-                        const cnt = facSched.stats.dailyLoads[fullD] || 0;
-                        const isAtCap = cnt >= maxCap;
-                        return (
-                          <div
-                            key={dShort}
-                            style={{
-                              fontSize: "10.5px",
-                              padding: "2px 5px",
-                              borderRadius: "4px",
-                              background: isAtCap ? "#fef3c7" : "#eff6ff",
-                              color: isAtCap ? "#b45309" : "#1e40af",
-                              border: `1px solid ${isAtCap ? "#f59e0b" : "#bfdbfe"}`,
-                              fontWeight: 700
-                            }}
-                          >
-                            {dShort}: {cnt}/{maxCap}
-                          </div>
-                        );
-                      })}
+                {/* VIEW 1: OFFICIAL INSTITUTIONAL PRINT VIEW (EXACT RIT IMAGE REPLICA) */}
+                {facultyPrintViewMode === "OFFICIAL" ? (
+                  <div className="official-personal-sheet-wrapper">
+                    <div className="official-timetable-sheet">
+                      {/* Document Header */}
+                      <div className="official-sheet-header">
+                        <div style={{ fontSize: "13.5px", fontWeight: 700, letterSpacing: "0.5px" }}>K.E.Society's</div>
+                        <div style={{ fontSize: "15px", fontWeight: 800, marginTop: "2px" }}>Rajarambapu Institute of Technology,Rajaramnagar</div>
+                        <div style={{ fontSize: "13.5px", fontWeight: 700, marginTop: "2px" }}>Department of Information Technology</div>
+                        <div style={{ fontSize: "13.5px", fontWeight: 700, marginTop: "2px" }}>Personal Timetable</div>
+                        <div style={{ fontSize: "13px", fontWeight: 700, marginTop: "2px" }}>{academicSession}/ {academicSemester}</div>
+                      </div>
+
+                      {/* Faculty Info & Workload Allocation Table */}
+                      <table className="official-summary-table">
+                        <tbody>
+                          <tr>
+                            <td style={{ fontWeight: 700, width: "130px", whiteSpace: "nowrap" }}>Name of Faculty :</td>
+                            <td style={{ fontWeight: 700, minWidth: "140px" }}>{getFacultyFullName(selectedFaculty)}</td>
+                            <td style={{ width: "165px", whiteSpace: "nowrap" }}>
+                              {(() => {
+                                const facObj = (inputs.faculties || []).find((f) => f.name === selectedFaculty);
+                                const desig = facObj?.designation || "Assistant Professor";
+                                const auth = facObj?.centralAuthority;
+                                return auth && auth !== "None" ? `${desig} (${auth})` : desig;
+                              })()}
+                            </td>
+                            <td style={{ fontWeight: 700, textAlign: "center", width: "40px" }}>UG</td>
+                            <td style={{ fontWeight: 700, width: "30px", textAlign: "center" }}>L:</td>
+                            <td style={{ textAlign: "center", width: "35px" }}>{ugL}</td>
+                            <td style={{ fontWeight: 700, width: "35px", textAlign: "center" }}>PR:</td>
+                            <td style={{ textAlign: "center", width: "35px" }}>{ugPR}</td>
+                            <td style={{ fontWeight: 700, width: "40px", textAlign: "center" }}>TUT:</td>
+                            <td style={{ width: "30px" }}></td>
+                            <td style={{ fontWeight: 700, width: "35px", textAlign: "center" }}>IIP:</td>
+                            <td style={{ width: "30px" }}></td>
+                            <td style={{ fontWeight: 700, width: "40px", textAlign: "center" }}>CAP:</td>
+                            <td style={{ textAlign: "center", width: "35px" }}>{ugCAP || ""}</td>
+                            <td style={{ fontWeight: 700, width: "40px", textAlign: "center" }}>M/P:</td>
+                            <td style={{ textAlign: "center", width: "35px" }}>{ugMP || ""}</td>
+                            <td style={{ width: "30px" }}></td>
+                            <td style={{ width: "30px" }}></td>
+                            <td style={{ fontWeight: 700, width: "50px", textAlign: "center" }}>Total:</td>
+                            <td style={{ fontWeight: 700, width: "45px", textAlign: "center" }}>{totalWorkload}</td>
+                          </tr>
+                          <tr>
+                            <td colSpan="3" style={{ borderTop: "none" }}></td>
+                            <td style={{ fontWeight: 700, textAlign: "center" }}>PG</td>
+                            <td style={{ fontWeight: 700, textAlign: "center" }}>L:</td>
+                            <td style={{ textAlign: "center" }}>{pgL || ""}</td>
+                            <td colSpan="2"></td>
+                            <td style={{ fontWeight: 700, textAlign: "center" }}>TUT:</td>
+                            <td></td>
+                            <td style={{ fontWeight: 700, textAlign: "center" }}>ED:</td>
+                            <td></td>
+                            <td style={{ fontWeight: 700, textAlign: "center" }}>URE:</td>
+                            <td></td>
+                            <td style={{ fontWeight: 700, textAlign: "center" }} colSpan="2">SEMINAR:</td>
+                            <td colSpan="4"></td>
+                          </tr>
+                        </tbody>
+                      </table>
+
+                      {/* Main Official Grid Table */}
+                      <table className="official-grid-table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: "42px" }}>Sr.No</th>
+                            <th style={{ width: "95px" }}>Time</th>
+                            <th colSpan="3">Monday</th>
+                            <th colSpan="3">Tuesday</th>
+                            <th colSpan="3">Wedensday</th>
+                            <th colSpan="3">Thursday</th>
+                            <th colSpan="3">Friday</th>
+                            <th colSpan="3">Saturday</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {/* Period 1 & 2 */}
+                          {renderOfficialBlockRowPair(1, 2, "1.", "10.00\nto\n11.00", "2.", "11.00\nto\n12.00", facSched, selectedFaculty)}
+
+                          {/* Lunch Break Row */}
+                          <tr className="break-row-official">
+                            <td colSpan="2" style={{ fontWeight: 700, fontSize: "11px", whiteSpace: "nowrap" }}>
+                              12.00 to 12.45 pm
+                            </td>
+                            <td colSpan="18" style={{ fontWeight: 700, letterSpacing: "1px", padding: "6px" }}>
+                              Lunch Break
+                            </td>
+                          </tr>
+
+                          {/* Period 3 & 4 */}
+                          {renderOfficialBlockRowPair(3, 4, "3.", "12.45\nto\n01.45", "4.", "01.45\nto\n02.45", facSched, selectedFaculty)}
+
+                          {/* Recess Row */}
+                          <tr className="break-row-official">
+                            <td colSpan="2" style={{ fontWeight: 700, fontSize: "11px", whiteSpace: "nowrap" }}>
+                              02.45 to 03.00 pm
+                            </td>
+                            <td colSpan="18" style={{ fontWeight: 700, letterSpacing: "1px", padding: "6px" }}>
+                              Recess
+                            </td>
+                          </tr>
+
+                          {/* Period 5 & 6 */}
+                          {renderOfficialBlockRowPair(5, 6, "5.", "03.00\nto\n04.00", "6.", "04.00\nto\n05.00", facSched, selectedFaculty)}
+                        </tbody>
+                      </table>
+
+                      {/* Institutional Signatures */}
+                      <div className="official-sheet-footer">
+                        <div style={{ textAlign: "center", minWidth: "180px" }}>
+                          <div style={{ fontWeight: 700, fontSize: "13px" }}>Time Table Incharge</div>
+                          <div style={{ marginTop: "6px", fontSize: "12.5px" }}>Ms.R.S.Patil</div>
+                        </div>
+                        <div style={{ textAlign: "center", minWidth: "180px" }}>
+                          <div style={{ fontWeight: 700, fontSize: "13px" }}>HOD</div>
+                          <div style={{ marginTop: "6px", fontSize: "12.5px" }}>Dr.A.C.Adamuthe</div>
+                        </div>
+                      </div>
                     </div>
-                    <span className="analytics-sub" style={{ marginTop: "2px" }}>Daily Lecture Limit: {maxCap}</span>
                   </div>
-                </div>
+                ) : (
+                  /* VIEW 2: MODERN ANALYTICS VIEW */
+                  <>
+                    <div className="perspective-header-card">
+                      <div className="perspective-meta-item">
+                        <span>Faculty Member</span>
+                        <strong style={{ fontSize: "16px", color: "#1e3a8a" }}>
+                          {getFacultyFullName(selectedFaculty)}
+                        </strong>
+                      </div>
+                      <div className="perspective-meta-item">
+                        <span>Short Code</span>
+                        <strong style={{ fontSize: "15px" }}>{selectedFaculty}</strong>
+                      </div>
+                      <div className="perspective-meta-item">
+                        <span>Designation & Role</span>
+                        <strong style={{ fontSize: "14px" }}>
+                          {(() => {
+                            const facObj = (inputs.faculties || []).find((f) => f.name === selectedFaculty);
+                            const desig = facObj?.designation || "Assistant Professor";
+                            const auth = facObj?.centralAuthority;
+                            return auth && auth !== "None" ? `${desig} (${auth})` : desig;
+                          })()} / Dept. of IT
+                        </strong>
+                      </div>
+                      <div className="perspective-meta-item">
+                        <span>Configured Max Daily Workload</span>
+                        <strong>{maxCap} Lectures / Day Max Cap</strong>
+                      </div>
+                    </div>
 
-                {/* Faculty Personal Weekly Timetable Grid */}
-                <div className="horizontal-schedule-card">
-                  <div className="table-responsive">
-                    <table className="horizontal-schedule-table">
-                      <thead>
-                        <tr>
-                          <th className="th-day">Day</th>
-                          <th>Period 1<div className="th-time">10:00 To 11:00</div></th>
-                          <th>Period 2<div className="th-time">11:00 To 12:00</div></th>
-                          <th className="th-break" title="Recess (12:00 To 12:45)"></th>
-                          <th>Period 3<div className="th-time">12:45 To 01:45</div></th>
-                          <th>Period 4<div className="th-time">01:45 To 02:45</div></th>
-                          <th className="th-break" title="Recess (02:45 To 03:00)"></th>
-                          <th>Period 5<div className="th-time">03:00 To 04:00</div></th>
-                          <th>Period 6<div className="th-time">04:00 To 05:00</div></th>
-                          <th style={{ width: "70px" }}>Day Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {days.map((day, dIdx) => {
-                          const dayLoad = facSched.stats.dailyLoads[day] || 0;
+                    <div className="analytics-grid">
+                      <div className="analytics-card">
+                        <span className="analytics-title">Total Assigned Load</span>
+                        <span className="analytics-value">{facSched.stats.totalHours} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs/Wk</span></span>
+                        <span className="analytics-sub">Across All Academic Years</span>
+                      </div>
+                      <div className="analytics-card">
+                        <span className="analytics-title">Core Theory Lectures</span>
+                        <span className="analytics-value" style={{ color: "#2563eb" }}>{facSched.stats.theoryHours} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs</span></span>
+                        <span className="analytics-sub">SY, TY & B.Tech Classes</span>
+                      </div>
+                      <div className="analytics-card">
+                        <span className="analytics-title">Laboratory Practicals</span>
+                        <span className="analytics-value" style={{ color: "#7e22ce" }}>{facSched.stats.practicalHours} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs</span></span>
+                        <span className="analytics-sub">Practical Batch Sessions</span>
+                      </div>
+                      <div className="analytics-card">
+                        <span className="analytics-title">FY University External</span>
+                        <span className="analytics-value" style={{ color: "#b45309" }}>{facSched.stats.externalHours} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs</span></span>
+                        <span className="analytics-sub">EEDP, PPS & PCC Loads</span>
+                      </div>
+                    </div>
 
-                          return (
-                            <tr key={day}>
-                              <td className="day-label-cell">
-                                {day.charAt(0) + day.slice(1).toLowerCase()}
-                              </td>
-
-                              {[1, 2].map((p) => {
-                                const slot = facSched.grid[day]?.[p];
-                                if (!slot) {
-                                  return (
-                                    <td key={p} className="free-slot-cell">
-                                      <span>— Free / Prep —</span>
-                                    </td>
-                                  );
-                                }
-                                return (
-                                  <td key={p} className={`schedule-slot-cell ${slot.badgeClass}`}>
-                                    <div className="fac-slot-content">
-                                      <span className="fac-slot-badge" style={{ background: slot.year === "FY" ? "#fef3c7" : "#dbeafe", color: slot.year === "FY" ? "#92400e" : "#1e40af" }}>
-                                        {slot.year === "FY" ? "FY Univ" : `${slot.year} IT`} {slot.batch ? `• Batch ${slot.batch}` : ""}
-                                      </span>
-                                      <strong className="fac-slot-course">{slot.course}</strong>
-                                      <span className="fac-slot-loc">📍 {slot.location}</span>
-                                    </div>
-                                  </td>
-                                );
-                              })}
-
-                              {dIdx === 0 && (
-                                <td rowSpan="5" className="break-col-cell">
-                                  <span className="vertical-break-text">RECESS</span>
-                                </td>
-                              )}
-
-                              {[3, 4].map((p) => {
-                                const slot = facSched.grid[day]?.[p];
-                                if (!slot) {
-                                  return (
-                                    <td key={p} className="free-slot-cell">
-                                      <span>— Free / Prep —</span>
-                                    </td>
-                                  );
-                                }
-                                return (
-                                  <td key={p} className={`schedule-slot-cell ${slot.badgeClass}`}>
-                                    <div className="fac-slot-content">
-                                      <span className="fac-slot-badge" style={{ background: slot.year === "FY" ? "#fef3c7" : "#dbeafe", color: slot.year === "FY" ? "#92400e" : "#1e40af" }}>
-                                        {slot.year === "FY" ? "FY Univ" : `${slot.year} IT`} {slot.batch ? `• Batch ${slot.batch}` : ""}
-                                      </span>
-                                      <strong className="fac-slot-course">{slot.course}</strong>
-                                      <span className="fac-slot-loc">📍 {slot.location}</span>
-                                    </div>
-                                  </td>
-                                );
-                              })}
-
-                              {dIdx === 0 && (
-                                <td rowSpan="5" className="break-col-cell">
-                                  <span className="vertical-break-text">RECESS</span>
-                                </td>
-                              )}
-
-                              {[5, 6].map((p) => {
-                                const slot = facSched.grid[day]?.[p];
-                                if (!slot) {
-                                  return (
-                                    <td key={p} className="free-slot-cell">
-                                      <span>— Free / Prep —</span>
-                                    </td>
-                                  );
-                                }
-                                return (
-                                  <td key={p} className={`schedule-slot-cell ${slot.badgeClass}`}>
-                                    <div className="fac-slot-content">
-                                      <span className="fac-slot-badge" style={{ background: slot.year === "FY" ? "#fef3c7" : "#dbeafe", color: slot.year === "FY" ? "#92400e" : "#1e40af" }}>
-                                        {slot.year === "FY" ? "FY Univ" : `${slot.year} IT`} {slot.batch ? `• Batch ${slot.batch}` : ""}
-                                      </span>
-                                      <strong className="fac-slot-course">{slot.course}</strong>
-                                      <span className="fac-slot-loc">📍 {slot.location}</span>
-                                    </div>
-                                  </td>
-                                );
-                              })}
-
-                              <td style={{ fontWeight: 800, background: "#f8fafc", fontSize: "12px", color: dayLoad >= maxCap ? "#b45309" : "#0f172a" }}>
-                                {dayLoad} Hrs
-                              </td>
+                    <div className="horizontal-schedule-card">
+                      <div className="table-responsive">
+                        <table className="horizontal-schedule-table">
+                          <thead>
+                            <tr>
+                              <th className="th-day">Day</th>
+                              <th>Period 1<div className="th-time">10:00 To 11:00</div></th>
+                              <th>Period 2<div className="th-time">11:00 To 12:00</div></th>
+                              <th className="th-break" title="Recess (12:00 To 12:45)"></th>
+                              <th>Period 3<div className="th-time">12:45 To 01:45</div></th>
+                              <th>Period 4<div className="th-time">01:45 To 02:45</div></th>
+                              <th className="th-break" title="Recess (02:45 To 03:00)"></th>
+                              <th>Period 5<div className="th-time">03:00 To 04:00</div></th>
+                              <th>Period 6<div className="th-time">04:00 To 05:00</div></th>
+                              <th style={{ width: "70px" }}>Day Total</th>
                             </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Faculty Assigned Courses Reference Table */}
-                <div className="index-card" style={{ marginTop: "16px" }}>
-                  <h4>📋 Teaching Assignments & Workload Breakdown for {getFacultyFullName(selectedFaculty)}</h4>
-                  <table className="index-table">
-                    <thead>
-                      <tr>
-                        <th>Class</th>
-                        <th>Course / Activity</th>
-                        <th>Type</th>
-                        <th>Location</th>
-                        <th style={{ textAlign: "center" }}>Weekly Periods</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(facSched.courses || []).map((c, idx) => (
-                        <tr key={idx}>
-                          <td style={{ fontWeight: 700, color: "#1e3a8a" }}>{c.year === "FY" ? "FY University" : `${c.year} IT`}</td>
-                          <td style={{ fontWeight: 600 }}>{c.course}</td>
-                          <td>{c.type}</td>
-                          <td>📍 {c.location}</td>
-                          <td style={{ textAlign: "center", fontWeight: 700 }}>{c.hours} Hrs/Wk</td>
-                        </tr>
-                      ))}
-                      <tr style={{ background: "#f8fafc", fontWeight: 800 }}>
-                        <td colSpan="4" style={{ textAlign: "right", paddingRight: "10px" }}>Total Assigned Workload</td>
-                        <td style={{ textAlign: "center", color: "#1e3a8a", fontSize: "12px" }}>{facSched.stats.totalHours} Hrs/Wk</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                          </thead>
+                          <tbody>
+                            {days.map((day, dIdx) => {
+                              const dayLoad = facSched.stats.dailyLoads[day] || 0;
+                              return (
+                                <tr key={day}>
+                                  <td className="day-label-cell">
+                                    {day.charAt(0) + day.slice(1).toLowerCase()}
+                                  </td>
+                                  {[1, 2].map((p) => {
+                                    const slot = facSched.grid[day]?.[p];
+                                    if (!slot) return <td key={p} className="free-slot-cell">— Free / Prep —</td>;
+                                    return (
+                                      <td key={p} className={`schedule-slot-cell ${slot.badgeClass}`}>
+                                        <div className="fac-slot-content">
+                                          <span className="fac-slot-badge" style={{ background: slot.year === "FY" ? "#fef3c7" : "#dbeafe", color: slot.year === "FY" ? "#92400e" : "#1e40af" }}>
+                                            {slot.year === "FY" ? "FY Univ" : `${slot.year} IT`} {slot.batch ? `• Batch ${slot.batch}` : ""}
+                                          </span>
+                                          <strong className="fac-slot-course">{slot.course}</strong>
+                                          <span className="fac-slot-loc">📍 {slot.location}</span>
+                                        </div>
+                                      </td>
+                                    );
+                                  })}
+                                  {dIdx === 0 && <td rowSpan="5" className="break-col-cell"><span className="vertical-break-text">RECESS</span></td>}
+                                  {[3, 4].map((p) => {
+                                    const slot = facSched.grid[day]?.[p];
+                                    if (!slot) return <td key={p} className="free-slot-cell">— Free / Prep —</td>;
+                                    return (
+                                      <td key={p} className={`schedule-slot-cell ${slot.badgeClass}`}>
+                                        <div className="fac-slot-content">
+                                          <span className="fac-slot-badge" style={{ background: slot.year === "FY" ? "#fef3c7" : "#dbeafe", color: slot.year === "FY" ? "#92400e" : "#1e40af" }}>
+                                            {slot.year === "FY" ? "FY Univ" : `${slot.year} IT`} {slot.batch ? `• Batch ${slot.batch}` : ""}
+                                          </span>
+                                          <strong className="fac-slot-course">{slot.course}</strong>
+                                          <span className="fac-slot-loc">📍 {slot.location}</span>
+                                        </div>
+                                      </td>
+                                    );
+                                  })}
+                                  {dIdx === 0 && <td rowSpan="5" className="break-col-cell"><span className="vertical-break-text">RECESS</span></td>}
+                                  {[5, 6].map((p) => {
+                                    const slot = facSched.grid[day]?.[p];
+                                    if (!slot) return <td key={p} className="free-slot-cell">— Free / Prep —</td>;
+                                    return (
+                                      <td key={p} className={`schedule-slot-cell ${slot.badgeClass}`}>
+                                        <div className="fac-slot-content">
+                                          <span className="fac-slot-badge" style={{ background: slot.year === "FY" ? "#fef3c7" : "#dbeafe", color: slot.year === "FY" ? "#92400e" : "#1e40af" }}>
+                                            {slot.year === "FY" ? "FY Univ" : `${slot.year} IT`} {slot.batch ? `• Batch ${slot.batch}` : ""}
+                                          </span>
+                                          <strong className="fac-slot-course">{slot.course}</strong>
+                                          <span className="fac-slot-loc">📍 {slot.location}</span>
+                                        </div>
+                                      </td>
+                                    );
+                                  })}
+                                  <td style={{ fontWeight: 800, background: "#f8fafc", fontSize: "12px", color: dayLoad >= maxCap ? "#b45309" : "#0f172a" }}>
+                                    {dayLoad} Hrs
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                )}
               </>
             );
           })()}
@@ -6926,9 +9407,9 @@ function MasterTimetable() {
       {/* =========================================================================
           PERSPECTIVE 3: COMPUTER LAB OCCUPANCY SCHEDULE
           ========================================================================= */}
-      {selectedView === "LAB" && (
+      {(selectedView === "LAB" || selectedView === "LAB_MASTER") && (
         <div className="lab-view-container">
-          {selectedLab !== "ALL" ? (
+          {selectedLab !== "ALL" && selectedView !== "LAB_MASTER" ? (
             (() => {
               const labSched = computeLabSchedule(selectedLab);
 
@@ -7252,6 +9733,829 @@ function MasterTimetable() {
         </div>
       )}
 
+      {/* =========================================================================
+          PERSPECTIVE 4: TOTAL STAFF LOAD SHEET
+          ========================================================================= */}
+      {selectedView === "LOAD_SHEET" && (() => {
+        const facultiesList = inputs.faculties || [];
+        let grandTotalTheoryHours = 0;
+        let grandTotalLabHours = 0;
+        let grandTotalHours = 0;
+        let balancedCount = 0;
+        let highLoadCount = 0;
+        let availableCount = 0;
+
+        const facultyLoads = facultiesList.map((f) => {
+          const asgn = getFacultyAssignments(f.name);
+          const totalHours = asgn.totalHours;
+          let theoryHrs = 0;
+          asgn.theorySubjects.forEach((s) => { theoryHrs += (s.weeklyPeriods || 0); });
+          let labHrs = 0;
+          asgn.labCourses.forEach(() => { labHrs += 2; });
+          asgn.practicals.forEach(() => { labHrs += 2; });
+
+          grandTotalTheoryHours += theoryHrs;
+          grandTotalLabHours += labHrs;
+          grandTotalHours += totalHours;
+
+          if (totalHours < 8) availableCount++;
+          else if (totalHours > 16) highLoadCount++;
+          else balancedCount++;
+
+          return {
+            ...f,
+            asgn,
+            totalHours,
+            theoryHrs,
+            labHrs
+          };
+        });
+
+        const avgLoad = facultiesList.length > 0 ? (grandTotalHours / facultiesList.length).toFixed(1) : 0;
+
+        return (
+          <div className="load-sheet-container" style={{ marginBottom: "30px" }}>
+            {/* Meta Banner */}
+            <div className="perspective-header-card">
+              <div className="perspective-meta-item">
+                <span>Academic Document</span>
+                <strong style={{ fontSize: "16px", color: "#1e3a8a" }}>Department Faculty Workload Allocation Sheet</strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Department & Institute</span>
+                <strong>Department of Information Technology, RIT</strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Academic Term</span>
+                <strong>Academic Year 2024-25 • Odd Semester</strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Total Active Staff</span>
+                <strong style={{ color: "#7e22ce" }}>{facultiesList.length} Faculty Members</strong>
+              </div>
+            </div>
+
+            {/* Department Summary Metrics */}
+            <div className="analytics-grid">
+              <div className="analytics-card">
+                <span className="analytics-title">Total Allocated Hours</span>
+                <span className="analytics-value" style={{ color: "#1e3a8a" }}>
+                  {grandTotalHours} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs / Week</span>
+                </span>
+                <span className="analytics-sub">Across All Theory, Labs & University Load</span>
+              </div>
+              <div className="analytics-card">
+                <span className="analytics-title">Average Staff Load</span>
+                <span className="analytics-value" style={{ color: "#7e22ce" }}>
+                  {avgLoad} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs / Faculty</span>
+                </span>
+                <span className="analytics-sub">Standard Target: 12 – 16 Hours / Week</span>
+              </div>
+              <div className="analytics-card">
+                <span className="analytics-title">Workload Distribution</span>
+                <div style={{ display: "flex", gap: "10px", marginTop: "8px", fontSize: "12.5px", fontWeight: 700 }}>
+                  <span style={{ color: "#16a34a" }}>✓ {balancedCount} Balanced</span>
+                  <span style={{ color: "#b45309" }}>🟠 {highLoadCount} High Load</span>
+                  <span style={{ color: "#0284c7" }}>🟢 {availableCount} Available</span>
+                </div>
+                <span className="analytics-sub" style={{ marginTop: "4px" }}>Faculty Capacity Balance Status</span>
+              </div>
+            </div>
+
+            {/* Main Workload Allocation Table */}
+            <div className="master-table-card" style={{ marginTop: "16px" }}>
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "12px 18px",
+                background: "#f8fafc",
+                borderBottom: "2px solid #cbd5e1"
+              }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "15px", color: "#0f172a" }}>
+                    📋 Total Staff Load Sheet — Detailed Course & Laboratory Allocations
+                  </h3>
+                  <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
+                    Official breakdown of theory lectures, practical labs, and external academic duties
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary no-print"
+                  onClick={() => window.print()}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", padding: "6px 14px", fontSize: "13px" }}
+                >
+                  🖨️ Print Load Sheet
+                </button>
+              </div>
+
+              <div className="table-responsive">
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px" }}>
+                  <thead>
+                    <tr style={{ background: "#f1f5f9", textAlign: "left", borderBottom: "2px solid #cbd5e1", color: "#334155" }}>
+                      <th style={{ padding: "10px 10px", width: "45px", textAlign: "center" }}>Sr.</th>
+                      <th style={{ padding: "10px 10px", width: "75px" }}>Faculty</th>
+                      <th style={{ padding: "10px 10px", minWidth: "160px" }}>Faculty Full Name</th>
+                      <th style={{ padding: "10px 10px", minWidth: "150px" }}>Post / Designation</th>
+                      <th style={{ padding: "10px 10px", width: "100px", textAlign: "center" }}>Authority</th>
+                      <th style={{ padding: "10px 10px", width: "85px" }}>Daily Cap</th>
+                      <th style={{ padding: "10px 10px", minWidth: "200px" }}>Theory Courses (SY / TY / BTech)</th>
+                      <th style={{ padding: "10px 10px", minWidth: "160px" }}>Practical Labs</th>
+                      <th style={{ padding: "10px 10px", minWidth: "130px" }}>Fixed & FY Load</th>
+                      <th style={{ padding: "10px 10px", width: "95px", textAlign: "center" }}>Total Load</th>
+                      <th style={{ padding: "10px 10px", width: "125px", textAlign: "center" }}>Status</th>
+                      <th style={{ padding: "10px 10px", width: "110px", textAlign: "center" }} className="no-print">Quick View</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {facultyLoads.map((f, idx) => {
+                      const asgn = f.asgn;
+                      const totalHours = f.totalHours;
+
+                      let badgeBg = "#dcfce7";
+                      let badgeColor = "#15803d";
+                      let badgeBorder = "#86efac";
+                      let badgeText = "✓ Balanced";
+
+                      if (totalHours < 8) {
+                        badgeBg = "#e0f2fe";
+                        badgeColor = "#0369a1";
+                        badgeBorder = "#7dd3fc";
+                        badgeText = "🟢 Available (<8h)";
+                      } else if (totalHours > 16) {
+                        badgeBg = "#fef3c7";
+                        badgeColor = "#b45309";
+                        badgeBorder = "#fcd34d";
+                        badgeText = "🟠 High Load (>16h)";
+                      }
+
+                      return (
+                        <tr key={f.name} style={{ borderBottom: "1px solid #e2e8f0", background: idx % 2 === 0 ? "#ffffff" : "#f8fafc" }}>
+                          <td style={{ padding: "10px 10px", textAlign: "center", color: "#64748b", fontWeight: 600 }}>{idx + 1}</td>
+                          <td style={{ padding: "10px 10px", fontWeight: 700, color: "#1e3a8a" }}>
+                            <span style={{ background: "#eff6ff", border: "1px solid #bfdbfe", padding: "3px 8px", borderRadius: "6px", fontSize: "12px" }}>
+                              {f.name}
+                            </span>
+                          </td>
+                          <td style={{ padding: "10px 10px", fontWeight: 600, color: "#0f172a" }}>
+                            {f.fullName || f.name}
+                          </td>
+                          <td style={{ padding: "10px 10px", color: "#334155", fontWeight: 500 }}>
+                            {f.designation || "Assistant Professor"}
+                          </td>
+                          <td style={{ padding: "10px 10px", textAlign: "center" }}>
+                            {f.centralAuthority && f.centralAuthority !== "None" ? (
+                              <span style={{
+                                background: "#faf5ff",
+                                color: "#7e22ce",
+                                border: "1px solid #d8b4fe",
+                                padding: "2px 8px",
+                                borderRadius: "10px",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                display: "inline-block"
+                              }}>
+                                {f.centralAuthority}
+                              </span>
+                            ) : (
+                              <span style={{ color: "#94a3b8", fontSize: "11.5px" }}>—</span>
+                            )}
+                          </td>
+                          <td style={{ padding: "10px 10px", color: "#64748b", fontSize: "12px" }}>
+                            {f.maxDailyLectures || 4} hrs/day
+                          </td>
+                          <td style={{ padding: "10px 10px" }}>
+                            {asgn.theorySubjects.length === 0 ? (
+                              <span style={{ color: "#94a3b8", fontSize: "11.5px" }}>— None —</span>
+                            ) : (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
+                                {asgn.theorySubjects.map((s, sIdx) => (
+                                  <span key={sIdx} style={{ background: "#e0f2fe", color: "#0369a1", padding: "2px 7px", borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>
+                                    {s.year}: {s.code} ({s.weeklyPeriods}h)
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ padding: "10px 10px" }}>
+                            {asgn.labCourses.length === 0 && asgn.practicals.length === 0 ? (
+                              <span style={{ color: "#94a3b8", fontSize: "11.5px" }}>— None —</span>
+                            ) : (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
+                                {asgn.labCourses.map((lc, lIdx) => (
+                                  <span key={lIdx} style={{ background: "#f0fdf4", color: "#15803d", padding: "2px 7px", borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>
+                                    {lc.year}: {lc.code} Lab
+                                  </span>
+                                ))}
+                                {asgn.practicals.length > 0 && asgn.labCourses.length === 0 && (
+                                  <span style={{ background: "#f0fdf4", color: "#15803d", padding: "2px 7px", borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>
+                                    {asgn.practicals.length} Practical session(s)
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ padding: "10px 10px" }}>
+                            {asgn.fixedSlots.length === 0 && asgn.externalLoads.length === 0 ? (
+                              <span style={{ color: "#94a3b8", fontSize: "11.5px" }}>— None —</span>
+                            ) : (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
+                                {asgn.fixedSlots.map((fs, fIdx) => (
+                                  <span key={fIdx} style={{ background: "#fef3c7", color: "#92400e", padding: "2px 7px", borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>
+                                    {fs.year}: {fs.course}
+                                  </span>
+                                ))}
+                                {asgn.externalLoads.map((ext, eIdx) => (
+                                  <span key={`ext-${eIdx}`} style={{ background: "#faf5ff", color: "#6b21a8", padding: "2px 7px", borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>
+                                    {ext.loadType}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ padding: "10px 10px", textAlign: "center", fontWeight: 800, fontSize: "13px", color: "#0f172a" }}>
+                            {totalHours} hrs/wk
+                          </td>
+                          <td style={{ padding: "10px 10px", textAlign: "center" }}>
+                            <span style={{
+                              background: badgeBg,
+                              color: badgeColor,
+                              border: `1px solid ${badgeBorder}`,
+                              padding: "3px 8px",
+                              borderRadius: "12px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              display: "inline-block"
+                            }}>
+                              {badgeText}
+                            </span>
+                          </td>
+                          <td style={{ padding: "10px 10px", textAlign: "center" }} className="no-print">
+                            <button
+                              type="button"
+                              className="sub-view-btn"
+                              onClick={() => {
+                                setSelectedFaculty(f.name);
+                                setSelectedView("FACULTY");
+                              }}
+                              style={{ padding: "4px 8px", fontSize: "11px" }}
+                            >
+                              View Schedule →
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: "#f1f5f9", fontWeight: 800, borderTop: "2px solid #cbd5e1" }}>
+                      <td colSpan="4" style={{ padding: "12px 10px", textAlign: "right" }}>
+                        Total Department Teaching Load:
+                      </td>
+                      <td style={{ padding: "12px 10px", color: "#0369a1" }}>
+                        {grandTotalTheoryHours} hrs/wk (Theory)
+                      </td>
+                      <td style={{ padding: "12px 10px", color: "#15803d" }}>
+                        {grandTotalLabHours} hrs/wk (Labs)
+                      </td>
+                      <td></td>
+                      <td style={{ padding: "12px 10px", textAlign: "center", fontSize: "14px", color: "#1e3a8a" }}>
+                        {grandTotalHours} hrs/wk
+                      </td>
+                      <td colSpan="2"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* =========================================================================
+          PERSPECTIVE 5: MASTER PERSONAL FACULTY TIME TABLE
+          ========================================================================= */}
+      {selectedView === "FACULTY_MASTER" && (() => {
+        const { faculties, facultySchedules } = computeAllFacultyMasterMatrix();
+        const daysToRender = facultyMasterDay === "ALL" ? days : [facultyMasterDay];
+
+        return (
+          <div className="faculty-master-container" style={{ marginBottom: "30px" }}>
+            {/* Meta Banner */}
+            <div className="perspective-header-card">
+              <div className="perspective-meta-item">
+                <span>Timetable Schedule</span>
+                <strong style={{ fontSize: "16px", color: "#1e3a8a" }}>Master Personal Faculty Time Table</strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Department Staff</span>
+                <strong>{faculties.length} Teaching Faculties Synchronized</strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Current View Mode</span>
+                <strong style={{ color: "#7e22ce" }}>
+                  {facultyMasterDay === "ALL" ? "All Working Days (Mon to Fri)" : `${facultyMasterDay.charAt(0) + facultyMasterDay.slice(1).toLowerCase()} Day Schedule`}
+                </strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Working Slots</span>
+                <strong>6 Periods / Day + 2 Recess Breaks</strong>
+              </div>
+            </div>
+
+            {/* Render Day-by-Day Master Tables */}
+            {daysToRender.map((day) => {
+              return (
+                <div key={day} className="horizontal-schedule-card" style={{ marginBottom: "24px" }}>
+                  <div style={{
+                    padding: "10px 16px",
+                    background: "#f8fafc",
+                    borderBottom: "2px solid #cbd5e1",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center"
+                  }}>
+                    <div style={{ fontWeight: 800, fontSize: "13.5px", color: "#1e3a8a" }}>
+                      📅 {day.charAt(0) + day.slice(1).toLowerCase()} Master Faculty Matrix
+                    </div>
+                    <span style={{ fontSize: "11.5px", color: "#64748b", fontWeight: 600 }}>
+                      All Faculty Synchronized Schedule
+                    </span>
+                  </div>
+
+                  <div className="table-responsive">
+                    <table className="horizontal-schedule-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: "75px" }}>Faculty</th>
+                          <th style={{ width: "160px" }}>Full Name</th>
+                          <th>Period 1<div className="th-time">10:00 To 11:00</div></th>
+                          <th>Period 2<div className="th-time">11:00 To 12:00</div></th>
+                          <th className="th-break" title="Recess (12:00 To 12:45)"></th>
+                          <th>Period 3<div className="th-time">12:45 To 01:45</div></th>
+                          <th>Period 4<div className="th-time">01:45 To 02:45</div></th>
+                          <th className="th-break" title="Recess (02:45 To 03:00)"></th>
+                          <th>Period 5<div className="th-time">03:00 To 04:00</div></th>
+                          <th>Period 6<div className="th-time">04:00 To 05:00</div></th>
+                          <th style={{ width: "70px" }}>Day Load</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {facultySchedules.map(({ faculty: f, schedule: sched }, idx) => {
+                          const dailyLoad = sched.stats.dailyLoads[day] || 0;
+                          return (
+                            <tr key={f.name} style={{ background: idx % 2 === 0 ? "#ffffff" : "#fbfcfe" }}>
+                              <td style={{ fontWeight: 700, color: "#1e3a8a" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedFaculty(f.name);
+                                    setSelectedView("FACULTY");
+                                  }}
+                                  style={{
+                                    background: "#eff6ff",
+                                    border: "1px solid #bfdbfe",
+                                    padding: "2px 6px",
+                                    borderRadius: "4px",
+                                    cursor: "pointer",
+                                    fontWeight: 700,
+                                    color: "#1d4ed8",
+                                    fontSize: "11px"
+                                  }}
+                                  title={`View full personal schedule for Prof. ${f.fullName || f.name}`}
+                                >
+                                  {f.name}
+                                </button>
+                              </td>
+                              <td style={{ textAlign: "left", paddingLeft: "8px", fontWeight: 600, fontSize: "11.5px", color: "#334155" }}>
+                                {f.fullName || f.name}
+                              </td>
+
+                              {[1, 2].map((p) => {
+                                const entry = sched.grid[day]?.[p];
+                                if (!entry) {
+                                  return (
+                                    <td key={p} style={{ color: "#cbd5e1", fontSize: "11px" }}>
+                                      —
+                                    </td>
+                                  );
+                                }
+                                return (
+                                  <td key={p} className={`schedule-slot-cell ${entry.badgeClass || ""}`} style={{ padding: "4px" }}>
+                                    <div style={{ fontSize: "10.5px", fontWeight: 700, color: "#0f172a" }}>
+                                      {entry.year} • {entry.course}
+                                    </div>
+                                    <div style={{ fontSize: "9.5px", color: "#475569" }}>
+                                      📍 {entry.location}
+                                    </div>
+                                  </td>
+                                );
+                              })}
+
+                              {idx === 0 && (
+                                <td rowSpan={facultySchedules.length} className="break-col-cell">
+                                  <span className="vertical-break-text">RECESS</span>
+                                </td>
+                              )}
+
+                              {[3, 4].map((p) => {
+                                const entry = sched.grid[day]?.[p];
+                                if (!entry) {
+                                  return (
+                                    <td key={p} style={{ color: "#cbd5e1", fontSize: "11px" }}>
+                                      —
+                                    </td>
+                                  );
+                                }
+                                return (
+                                  <td key={p} className={`schedule-slot-cell ${entry.badgeClass || ""}`} style={{ padding: "4px" }}>
+                                    <div style={{ fontSize: "10.5px", fontWeight: 700, color: "#0f172a" }}>
+                                      {entry.year} • {entry.course}
+                                    </div>
+                                    <div style={{ fontSize: "9.5px", color: "#475569" }}>
+                                      📍 {entry.location}
+                                    </div>
+                                  </td>
+                                );
+                              })}
+
+                              {idx === 0 && (
+                                <td rowSpan={facultySchedules.length} className="break-col-cell">
+                                  <span className="vertical-break-text">RECESS</span>
+                                </td>
+                              )}
+
+                              {[5, 6].map((p) => {
+                                const entry = sched.grid[day]?.[p];
+                                if (!entry) {
+                                  return (
+                                    <td key={p} style={{ color: "#cbd5e1", fontSize: "11px" }}>
+                                      —
+                                    </td>
+                                  );
+                                }
+                                return (
+                                  <td key={p} className={`schedule-slot-cell ${entry.badgeClass || ""}`} style={{ padding: "4px" }}>
+                                    <div style={{ fontSize: "10.5px", fontWeight: 700, color: "#0f172a" }}>
+                                      {entry.year} • {entry.course}
+                                    </div>
+                                    <div style={{ fontSize: "9.5px", color: "#475569" }}>
+                                      📍 {entry.location}
+                                    </div>
+                                  </td>
+                                );
+                              })}
+
+                              <td style={{ fontWeight: 800, color: dailyLoad > 0 ? "#1e40af" : "#94a3b8", fontSize: "11.5px" }}>
+                                {dailyLoad > 0 ? `${dailyLoad}h` : "Off"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
+      {/* =========================================================================
+          PERSPECTIVE 6: MASTER CLASSROOM TIME TABLE
+          ========================================================================= */}
+      {selectedView === "ROOM_MASTER" && (() => {
+        const { roomStats, matrix, rooms } = computeAllRoomsOverview();
+
+        return (
+          <div className="room-master-container" style={{ marginBottom: "30px" }}>
+            {/* Perspective Header Card */}
+            <div className="perspective-header-card">
+              <div className="perspective-meta-item">
+                <span>Classroom Facility</span>
+                <strong style={{ fontSize: "16px", color: "#1e3a8a" }}>Master Classroom Time Table (All Theory Halls)</strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Core Lecture Halls</span>
+                <strong>3 Classrooms (CR-27, CR-26, CR-212)</strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Department Weekly Capacity</span>
+                <strong>90 Lecture Hours (3 × 30 Hours)</strong>
+              </div>
+            </div>
+
+            {/* Room Utilization Comparison Summary */}
+            <div className="index-card" style={{ marginBottom: "18px" }}>
+              <h4>📊 Theory Lecture Halls Weekly Utilization Comparison</h4>
+              <table className="index-table">
+                <thead>
+                  <tr>
+                    <th>Classroom</th>
+                    <th>Designated Academic Class</th>
+                    <th>Scheduled Lecture Hours</th>
+                    <th>Weekly Capacity</th>
+                    <th>Utilization %</th>
+                    <th style={{ width: "220px" }}>Utilization Meter</th>
+                    <th style={{ textAlign: "center" }}>Quick Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roomStats.map((item) => (
+                    <tr key={item.room}>
+                      <td style={{ fontWeight: 800, color: "#1e40af", fontSize: "12.5px" }}>{item.room}</td>
+                      <td style={{ fontWeight: 600 }}>{item.label}</td>
+                      <td style={{ fontWeight: 700 }}>{item.totalOccupied} Hours / Week</td>
+                      <td>30 Hours</td>
+                      <td style={{ fontWeight: 800, color: Number(item.utilizationPct) > 70 ? "#b45309" : "#16a34a" }}>
+                        {item.utilizationPct}%
+                      </td>
+                      <td>
+                        <div className="progress-bar-container">
+                          <div
+                            className="progress-bar-fill"
+                            style={{
+                              width: `${Math.min(100, Number(item.utilizationPct))}%`,
+                              background: Number(item.utilizationPct) > 70 ? "#f59e0b" : "#22c55e"
+                            }}
+                          />
+                        </div>
+                      </td>
+                      <td style={{ textAlign: "center" }}>
+                        <button
+                          type="button"
+                          className="sub-view-btn"
+                          onClick={() => {
+                            setSelectedRoom(item.room);
+                            setSelectedView("ROOM");
+                          }}
+                          style={{ padding: "3px 8px", fontSize: "11px" }}
+                        >
+                          View {item.room} Grid →
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Synchronized Multi-Classroom Schedule Matrix */}
+            <div className="horizontal-schedule-card">
+              <div style={{ padding: "10px 14px", background: "#f8fafc", borderBottom: "1px solid #000", fontWeight: 700, fontSize: "12px", color: "#1e3a8a" }}>
+                🏛️ Synchronized Multi-Classroom Timetable Matrix (CR-27, CR-26 & CR-212 by Time Block)
+              </div>
+              <div className="table-responsive">
+                <table className="horizontal-schedule-table">
+                  <thead>
+                    <tr>
+                      <th className="th-day">Day</th>
+                      <th style={{ width: "40px" }}>Period</th>
+                      <th style={{ width: "95px" }}>Time Slot</th>
+                      <th>CR-27 (S.Y. B.Tech)</th>
+                      <th>CR-26 (T.Y. B.Tech)</th>
+                      <th>CR-212 (Final Year B.Tech)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {days.map((day) => (
+                      periods.map((p, pIdx) => (
+                        <tr key={`${day}-${p}`} className={pIdx === 0 ? "day-start-row" : ""}>
+                          {pIdx === 0 && (
+                            <td rowSpan="6" className="day-name-cell">
+                              {day.charAt(0) + day.slice(1).toLowerCase()}
+                            </td>
+                          )}
+                          <td style={{ fontWeight: 700 }}>{p}</td>
+                          <td style={{ fontSize: "10.5px", whiteSpace: "nowrap" }}>{periodTimings[pIdx]}</td>
+
+                          {rooms.map((r) => {
+                            const entry = matrix[day]?.[p]?.[r.code];
+                            if (!entry) {
+                              return (
+                                <td key={r.code} style={{ background: "#f0fdf4", color: "#16a34a", fontSize: "10.5px" }}>
+                                  ✓ Available / Vacant Hall
+                                </td>
+                              );
+                            }
+                            return (
+                              <td key={r.code} style={{ background: "#eff6ff", padding: "5px 6px", fontSize: "10.5px", textAlign: "left" }}>
+                                <strong style={{ color: "#1e40af" }}>{entry.year} IT</strong>: {entry.course}
+                                <div style={{ color: "#64748b", fontSize: "9.5px", marginTop: "1px" }}>
+                                  👨‍🏫 Prof. {entry.faculty}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* =========================================================================
+          PERSPECTIVE 7: PERSONAL CLASSROOM TIME TABLE
+          ========================================================================= */}
+      {selectedView === "ROOM" && (() => {
+        const roomSched = computeRoomSchedule(selectedRoom);
+        const roomObj = getAllClassrooms().find((r) => r.code === selectedRoom) || { label: `Lecture Hall ${selectedRoom}`, year: "Class" };
+
+        return (
+          <div className="room-view-container" style={{ marginBottom: "30px" }}>
+            {/* Room Meta Banner */}
+            <div className="perspective-header-card">
+              <div className="perspective-meta-item">
+                <span>Lecture Classroom</span>
+                <strong style={{ fontSize: "16px", color: "#1e40af" }}>{selectedRoom}</strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Primary Academic Class</span>
+                <strong>{roomObj.label}</strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Weekly Available Hours</span>
+                <strong>30 Hours (5 Working Days × 6 Periods)</strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Occupied Hours</span>
+                <strong style={{ color: "#1e40af" }}>{roomSched.stats.totalOccupied} Hours / Week</strong>
+              </div>
+              <div className="perspective-meta-item">
+                <span>Utilization Rate</span>
+                <strong style={{ color: Number(roomSched.stats.utilizationPct) > 70 ? "#b45309" : "#16a34a" }}>
+                  {roomSched.stats.utilizationPct}%
+                </strong>
+              </div>
+            </div>
+
+            {/* Analytics Metric Cards */}
+            <div className="analytics-grid">
+              <div className="analytics-card">
+                <span className="analytics-title">Scheduled Theory Lectures</span>
+                <span className="analytics-value" style={{ color: "#1e40af" }}>
+                  {roomSched.stats.totalOccupied} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs/Wk</span>
+                </span>
+                <span className="analytics-sub">Across Working Days in {selectedRoom}</span>
+              </div>
+              <div className="analytics-card">
+                <span className="analytics-title">Classroom Utilization</span>
+                <span className="analytics-value" style={{ color: "#1e3a8a" }}>{roomSched.stats.utilizationPct}%</span>
+                <div className="progress-bar-container">
+                  <div
+                    className="progress-bar-fill"
+                    style={{
+                      width: `${Math.min(100, Number(roomSched.stats.utilizationPct))}%`,
+                      background: Number(roomSched.stats.utilizationPct) > 70 ? "#f59e0b" : "#22c55e"
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="analytics-card">
+                <span className="analytics-title">Available Free Slots</span>
+                <span className="analytics-value" style={{ color: "#15803d" }}>
+                  {roomSched.stats.totalCapacity - roomSched.stats.totalOccupied} <span style={{ fontSize: "13px", fontWeight: 600 }}>Hrs</span>
+                </span>
+                <span className="analytics-sub">Vacant when students attend computer labs</span>
+              </div>
+            </div>
+
+            {/* Room Weekly Schedule Grid */}
+            <div className="horizontal-schedule-card">
+              <div className="table-responsive">
+                <table className="horizontal-schedule-table">
+                  <thead>
+                    <tr>
+                      <th className="th-day">Day</th>
+                      <th>Period 1<div className="th-time">10:00 To 11:00</div></th>
+                      <th>Period 2<div className="th-time">11:00 To 12:00</div></th>
+                      <th className="th-break" title="Recess (12:00 To 12:45)"></th>
+                      <th>Period 3<div className="th-time">12:45 To 01:45</div></th>
+                      <th>Period 4<div className="th-time">01:45 To 02:45</div></th>
+                      <th className="th-break" title="Recess (02:45 To 03:00)"></th>
+                      <th>Period 5<div className="th-time">03:00 To 04:00</div></th>
+                      <th>Period 6<div className="th-time">04:00 To 05:00</div></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {days.map((day, dIdx) => (
+                      <tr key={day}>
+                        <td className="day-label-cell">
+                          {day.charAt(0) + day.slice(1).toLowerCase()}
+                        </td>
+
+                        {[1, 2].map((p) => {
+                          const entry = roomSched.grid[day]?.[p];
+                          if (!entry) {
+                            return (
+                              <td key={p} className="available-lab-cell">
+                                ✓ Available / Vacant Hall
+                              </td>
+                            );
+                          }
+                          return (
+                            <td key={p} className="schedule-slot-cell badge-theory">
+                              <div className="lab-slot-content">
+                                <span className="lab-slot-class">{entry.year} IT</span>
+                                <strong className="lab-slot-subject">{entry.course}</strong>
+                                <span className="lab-slot-fac">👨‍🏫 Prof. {entry.faculty}</span>
+                              </div>
+                            </td>
+                          );
+                        })}
+
+                        {dIdx === 0 && (
+                          <td rowSpan="5" className="break-col-cell">
+                            <span className="vertical-break-text">RECESS</span>
+                          </td>
+                        )}
+
+                        {[3, 4].map((p) => {
+                          const entry = roomSched.grid[day]?.[p];
+                          if (!entry) {
+                            return (
+                              <td key={p} className="available-lab-cell">
+                                ✓ Available / Vacant Hall
+                              </td>
+                            );
+                          }
+                          return (
+                            <td key={p} className="schedule-slot-cell badge-theory">
+                              <div className="lab-slot-content">
+                                <span className="lab-slot-class">{entry.year} IT</span>
+                                <strong className="lab-slot-subject">{entry.course}</strong>
+                                <span className="lab-slot-fac">👨‍🏫 Prof. {entry.faculty}</span>
+                              </div>
+                            </td>
+                          );
+                        })}
+
+                        {dIdx === 0 && (
+                          <td rowSpan="5" className="break-col-cell">
+                            <span className="vertical-break-text">RECESS</span>
+                          </td>
+                        )}
+
+                        {[5, 6].map((p) => {
+                          const entry = roomSched.grid[day]?.[p];
+                          if (!entry) {
+                            return (
+                              <td key={p} className="available-lab-cell">
+                                ✓ Available / Vacant Hall
+                              </td>
+                            );
+                          }
+                          return (
+                            <td key={p} className="schedule-slot-cell badge-theory">
+                              <div className="lab-slot-content">
+                                <span className="lab-slot-class">{entry.year} IT</span>
+                                <strong className="lab-slot-subject">{entry.course}</strong>
+                                <span className="lab-slot-fac">👨‍🏫 Prof. {entry.faculty}</span>
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Scheduled Room Lectures Index */}
+            <div className="index-card" style={{ marginTop: "16px" }}>
+              <h4>🏛️ All Scheduled Theory Lectures in {selectedRoom}</h4>
+              <table className="index-table">
+                <thead>
+                  <tr>
+                    <th>Day & Slot</th>
+                    <th>Class Year</th>
+                    <th>Subject Course</th>
+                    <th>Faculty In-charge</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(roomSched.sessions || []).map((s, idx) => (
+                    <tr key={idx}>
+                      <td style={{ fontWeight: 600 }}>{s.day} Period {s.period} ({periodTimings[s.period - 1]})</td>
+                      <td style={{ fontWeight: 700, color: "#1e3a8a" }}>{s.year} IT</td>
+                      <td style={{ fontWeight: 700, color: "#0369a1" }}>{s.course}</td>
+                      <td>{getFacultyFullName(s.faculty)} ({s.faculty})</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Safe Faculty Deletion & Load Reassignment Modal */}
       {deleteModalOpen && facultyToDelete && (() => {
         const assignments = getFacultyAssignments(facultyToDelete);
@@ -7445,6 +10749,798 @@ function MasterTimetable() {
           </div>
         );
       })()}
+
+      {/* Setup for New Academic Year / Semester Modal */}
+      {newYearModalOpen && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          backgroundColor: "rgba(15, 23, 42, 0.65)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 99999,
+          padding: "20px"
+        }}>
+          <div style={{
+            background: "#ffffff",
+            borderRadius: "14px",
+            width: "100%",
+            maxWidth: "680px",
+            maxHeight: "92vh",
+            overflowY: "auto",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+            border: "1px solid #cbd5e1"
+          }}>
+            {/* Header */}
+            <div style={{
+              background: "linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)",
+              color: "white",
+              padding: "18px 24px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              borderTopLeftRadius: "14px",
+              borderTopRightRadius: "14px"
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "17px", fontWeight: 800 }}>
+                  ✨ Setup New Academic Year / Semester Timetable
+                </h3>
+                <p style={{ margin: "4px 0 0", fontSize: "12px", opacity: 0.9 }}>
+                  Import benchmark infrastructure & courses while clearing previous teacher allocations for fresh semester setup
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setNewYearModalOpen(false);
+                  setShowCustomSessionField(false);
+                }}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "white",
+                  fontSize: "22px",
+                  cursor: "pointer",
+                  lineHeight: 1
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ padding: "20px 24px" }}>
+              {/* Configuration Fields */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "18px" }}>
+                {/* Academic Session */}
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#1e3a8a", marginBottom: "6px" }}>
+                    📅 Academic Session:
+                  </label>
+                  {!showCustomSessionField ? (
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <select
+                        value={newYearSetupSession}
+                        onChange={(e) => {
+                          if (e.target.value === "__NEW__") {
+                            setShowCustomSessionField(true);
+                          } else {
+                            setNewYearSetupSession(e.target.value);
+                          }
+                        }}
+                        style={{
+                          width: "100%",
+                          padding: "8px 12px",
+                          borderRadius: "6px",
+                          border: "1px solid #cbd5e1",
+                          fontSize: "13px",
+                          fontWeight: 700
+                        }}
+                      >
+                        {availableSessions.map((sess) => (
+                          <option key={sess} value={sess}>{sess}</option>
+                        ))}
+                        <option value="__NEW__">+ Add Custom Session...</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <input
+                        type="text"
+                        placeholder="e.g. 2027-28"
+                        value={customSessionInput}
+                        onChange={(e) => setCustomSessionInput(e.target.value)}
+                        style={{
+                          flex: 1,
+                          padding: "8px 12px",
+                          borderRadius: "6px",
+                          border: "1px solid #3b82f6",
+                          fontSize: "13px",
+                          fontWeight: 700
+                        }}
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCustomSessionField(false)}
+                        className="btn-secondary"
+                        style={{ padding: "4px 8px", fontSize: "11px" }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Academic Term */}
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#1e3a8a", marginBottom: "6px" }}>
+                    🔄 Academic Term (Semester):
+                  </label>
+                  <select
+                    value={newYearSetupSemester}
+                    onChange={(e) => setNewYearSetupSemester(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      border: "1px solid #cbd5e1",
+                      fontSize: "13px",
+                      fontWeight: 700
+                    }}
+                  >
+                    <option value="PART-I">PART-I (Odd Semester: Sem III, V, VII)</option>
+                    <option value="PART-II">PART-II (Even Semester: Sem IV, VI, VIII)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Scope Selection */}
+              <div style={{ marginBottom: "18px" }}>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#1e3a8a", marginBottom: "6px" }}>
+                  🎯 Scope of Fresh Allotment:
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <label style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "10px 12px",
+                    borderRadius: "6px",
+                    border: newYearSetupScope === "ALL" ? "2px solid #2563eb" : "1px solid #cbd5e1",
+                    background: newYearSetupScope === "ALL" ? "#eff6ff" : "#f8fafc",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: "12.5px"
+                  }}>
+                    <input
+                      type="radio"
+                      name="setupScope"
+                      checked={newYearSetupScope === "ALL"}
+                      onChange={() => setNewYearSetupScope("ALL")}
+                    />
+                    <span>All 3 Years (SY, TY, BTech) <span style={{ fontSize: "11px", color: "#64748b" }}>(Recommended)</span></span>
+                  </label>
+
+                  <label style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "10px 12px",
+                    borderRadius: "6px",
+                    border: newYearSetupScope === "SY" ? "2px solid #2563eb" : "1px solid #cbd5e1",
+                    background: newYearSetupScope === "SY" ? "#eff6ff" : "#f8fafc",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: "12.5px"
+                  }}>
+                    <input
+                      type="radio"
+                      name="setupScope"
+                      checked={newYearSetupScope === "SY"}
+                      onChange={() => setNewYearSetupScope("SY")}
+                    />
+                    <span>Second Year (S.E. / S.Y.) Only</span>
+                  </label>
+
+                  <label style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "10px 12px",
+                    borderRadius: "6px",
+                    border: newYearSetupScope === "TY" ? "2px solid #2563eb" : "1px solid #cbd5e1",
+                    background: newYearSetupScope === "TY" ? "#eff6ff" : "#f8fafc",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: "12.5px"
+                  }}>
+                    <input
+                      type="radio"
+                      name="setupScope"
+                      checked={newYearSetupScope === "TY"}
+                      onChange={() => setNewYearSetupScope("TY")}
+                    />
+                    <span>Third Year (T.E. / T.Y.) Only</span>
+                  </label>
+
+                  <label style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "10px 12px",
+                    borderRadius: "6px",
+                    border: newYearSetupScope === "BTECH" ? "2px solid #2563eb" : "1px solid #cbd5e1",
+                    background: newYearSetupScope === "BTECH" ? "#eff6ff" : "#f8fafc",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: "12.5px"
+                  }}>
+                    <input
+                      type="radio"
+                      name="setupScope"
+                      checked={newYearSetupScope === "BTECH"}
+                      onChange={() => setNewYearSetupScope("BTECH")}
+                    />
+                    <span>Final Year (B.Tech) Only</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* What Will Happen Checklist */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "20px" }}>
+                <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", padding: "12px" }}>
+                  <div style={{ fontWeight: 700, color: "#166534", fontSize: "12.5px", marginBottom: "6px", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span>✅ Preserved & Imported</span>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: "16px", fontSize: "11.5px", color: "#166534", lineHeight: "1.6" }}>
+                    <li><strong>All {inputs.faculties?.length || 19} Faculty Members</strong> (Full names, designations & roles)</li>
+                    <li><strong>All Theory Courses</strong> (Course codes, names & weekly hours)</li>
+                    <li><strong>All Lab Courses & Batches</strong> (IL1 to IL6, Batches I1-I4)</li>
+                    <li><strong>Designated Classrooms</strong> (CR-27, CR-26, CR-212)</li>
+                  </ul>
+                </div>
+
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "8px", padding: "12px" }}>
+                  <div style={{ fontWeight: 700, color: "#92400e", fontSize: "12.5px", marginBottom: "6px", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span>🧹 Cleared for Fresh Allotment</span>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: "16px", fontSize: "11.5px", color: "#92400e", lineHeight: "1.6" }}>
+                    <li><strong>Teacher Allotments on Courses</strong> (Reset to -- Select Faculty --)</li>
+                    <li><strong>Lab Batch Allocations</strong> (Ready for fresh assignment)</li>
+                    <li><strong>Fixed & External Loads</strong> (Cleared so load starts at 0 hrs/wk)</li>
+                    <li><strong>Generated Schedules</strong> (Ready to generate after allotting)</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Info banner */}
+              <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "6px", padding: "10px 14px", fontSize: "12px", color: "#1e40af", marginBottom: "20px" }}>
+                💡 <strong>Load Calculation:</strong> After importing, each faculty's teaching workload will start at <strong>0 hrs/wk</strong>. As you allot courses to teachers in the department drawer, total staff load and capacity status will calculate dynamically in real time!
+              </div>
+
+              {/* Actions */}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewYearModalOpen(false);
+                    setShowCustomSessionField(false);
+                  }}
+                  className="btn-secondary"
+                  style={{ fontSize: "13px", padding: "8px 18px" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExecuteNewYearSetup()}
+                  className="btn-primary"
+                  style={{
+                    fontSize: "13px",
+                    padding: "8px 22px",
+                    background: "#16a34a",
+                    borderColor: "#15803d",
+                    fontWeight: 700,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px"
+                  }}
+                >
+                  🚀 Confirm & Import Base Structure
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Department Timetable Reset Options Modal */}
+      {resetModalOpen && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          backgroundColor: "rgba(15, 23, 42, 0.65)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 99999,
+          padding: "20px"
+        }}>
+          <div style={{
+            background: "#ffffff",
+            borderRadius: "14px",
+            width: "100%",
+            maxWidth: "580px",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+            border: "1px solid #cbd5e1",
+            overflow: "hidden"
+          }}>
+            {/* Header */}
+            <div style={{
+              background: "linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%)",
+              color: "white",
+              padding: "16px 20px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center"
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "16.5px", fontWeight: 800, display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span>🔄 Reset & Restore Options</span>
+                </h3>
+                <p style={{ margin: "3px 0 0", fontSize: "12px", opacity: 0.9 }}>
+                  Choose how you want to reset or restore your timetable and department data
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setResetModalOpen(false)}
+                style={{ background: "transparent", border: "none", color: "white", fontSize: "20px", cursor: "pointer", lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "12px" }}>
+              {/* Option 1: Reload from last saved point */}
+              <div
+                style={{
+                  border: "1.5px solid #86efac",
+                  background: "#f0fdf4",
+                  borderRadius: "10px",
+                  padding: "14px 16px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: "14px"
+                }}
+              >
+                <div>
+                  <strong style={{ color: "#166534", fontSize: "14px", display: "block" }}>
+                    🔄 Reload from Last Saved Point
+                  </strong>
+                  <span style={{ fontSize: "12px", color: "#374151" }}>
+                    Restore your department inputs and generated timetable back to your last saved state ({lastSavedTime || "No saved state yet"}).
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetModalOpen(false);
+                    handleReloadSavedData();
+                  }}
+                  className="btn-primary"
+                  style={{
+                    background: "#16a34a",
+                    borderColor: "#15803d",
+                    whiteSpace: "nowrap",
+                    padding: "7px 14px",
+                    fontSize: "12px",
+                    fontWeight: 700
+                  }}
+                >
+                  Reload Saved
+                </button>
+              </div>
+
+              {/* Option 2: Reset to RIT Benchmark Preset */}
+              <div
+                style={{
+                  border: "1.5px solid #cbd5e1",
+                  background: "#f8fafc",
+                  borderRadius: "10px",
+                  padding: "14px 16px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: "14px"
+                }}
+              >
+                <div>
+                  <strong style={{ color: "#0f172a", fontSize: "14px", display: "block" }}>
+                    🏢 Reset to RIT Benchmark Preset
+                  </strong>
+                  <span style={{ fontSize: "12px", color: "#64748b" }}>
+                    Restore the official RIT Information Technology department curriculum benchmark, standard faculty list, and room definitions.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetModalOpen(false);
+                    handleResetToPreset();
+                  }}
+                  className="btn-secondary"
+                  style={{
+                    whiteSpace: "nowrap",
+                    padding: "7px 14px",
+                    fontSize: "12px",
+                    fontWeight: 700
+                  }}
+                >
+                  Apply Preset
+                </button>
+              </div>
+
+              {/* Option 3: Reset to Blank */}
+              <div
+                style={{
+                  border: "1.5px solid #fecaca",
+                  background: "#fef2f2",
+                  borderRadius: "10px",
+                  padding: "14px 16px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: "14px"
+                }}
+              >
+                <div>
+                  <strong style={{ color: "#b91c1c", fontSize: "14px", display: "block" }}>
+                    🗑️ Reset to Blank Canvas
+                  </strong>
+                  <span style={{ fontSize: "12px", color: "#7f1d1d" }}>
+                    Erase all current courses, faculties, and room mappings to start entering brand new data from scratch.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetModalOpen(false);
+                    handleResetToBlank();
+                  }}
+                  className="btn-secondary"
+                  style={{
+                    background: "#fee2e2",
+                    color: "#dc2626",
+                    borderColor: "#fca5a5",
+                    whiteSpace: "nowrap",
+                    padding: "7px 14px",
+                    fontSize: "12px",
+                    fontWeight: 700
+                  }}
+                >
+                  Clear All
+                </button>
+              </div>
+
+              {/* Option 4: Revert Swaps (if adjustments exist) */}
+              {hasManualAdjustments && (
+                <div
+                  style={{
+                    border: "1.5px solid #fde68a",
+                    background: "#fffbeb",
+                    borderRadius: "10px",
+                    padding: "14px 16px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "14px"
+                  }}
+                >
+                  <div>
+                    <strong style={{ color: "#92400e", fontSize: "14px", display: "block" }}>
+                      ↩ Revert All Manual Swaps
+                    </strong>
+                    <span style={{ fontSize: "12px", color: "#78350f" }}>
+                      Discard manual period swaps and restore the original generated schedule layout.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResetModalOpen(false);
+                      handleRevertAllChanges();
+                    }}
+                    className="btn-secondary"
+                    style={{
+                      background: "#fef3c7",
+                      color: "#92400e",
+                      borderColor: "#f59e0b",
+                      whiteSpace: "nowrap",
+                      padding: "7px 14px",
+                      fontSize: "12px",
+                      fontWeight: 700
+                    }}
+                  >
+                    Revert Swaps
+                  </button>
+                </div>
+              )}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "10px" }}>
+                <button
+                  type="button"
+                  onClick={() => setResetModalOpen(false)}
+                  className="btn-secondary"
+                  style={{ padding: "8px 18px", fontSize: "13px" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Faculty Details & Name Modal */}
+      {editingFacultyModal.isOpen && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          backgroundColor: "rgba(15, 23, 42, 0.65)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 99999,
+          padding: "20px"
+        }}>
+          <div style={{
+            background: "#ffffff",
+            borderRadius: "14px",
+            width: "100%",
+            maxWidth: "580px",
+            maxHeight: "92vh",
+            overflowY: "auto",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+            border: "1px solid #cbd5e1"
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              background: "linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)",
+              color: "white",
+              padding: "16px 22px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              borderTopLeftRadius: "14px",
+              borderTopRightRadius: "14px"
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "16.5px", fontWeight: 800, display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span>✏️ Edit Faculty Details: {editingFacultyModal.originalCode}</span>
+                </h3>
+                <p style={{ margin: "3px 0 0", fontSize: "12px", opacity: 0.9 }}>
+                  Update faculty short code, full name, academic designation, authority, and workload limits
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingFacultyModal({ ...editingFacultyModal, isOpen: false })}
+                style={{ background: "transparent", border: "none", color: "white", fontSize: "20px", cursor: "pointer", lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSaveFacultyDetails} style={{ padding: "22px" }}>
+              {/* Short Code & Full Name */}
+              <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "14px", marginBottom: "16px" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#1e293b", marginBottom: "5px" }}>
+                    Short Code *:
+                  </label>
+                  <input
+                    type="text"
+                    value={editingFacultyModal.name}
+                    onChange={(e) => setEditingFacultyModal({ ...editingFacultyModal, name: e.target.value.toUpperCase() })}
+                    placeholder="e.g. SUM"
+                    required
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid #cbd5e1",
+                      fontSize: "13px",
+                      fontWeight: 700,
+                      color: "#1e40af",
+                      boxSizing: "border-box"
+                    }}
+                  />
+                  <span style={{ fontSize: "10.5px", color: "#64748b", marginTop: "3px", display: "block" }}>
+                    Used on timetable
+                  </span>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#1e293b", marginBottom: "5px" }}>
+                    Faculty Full Name *:
+                  </label>
+                  <input
+                    type="text"
+                    value={editingFacultyModal.fullName}
+                    onChange={(e) => setEditingFacultyModal({ ...editingFacultyModal, fullName: e.target.value })}
+                    placeholder="e.g. Dr. S. U. Mane"
+                    required
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid #cbd5e1",
+                      fontSize: "13px",
+                      boxSizing: "border-box"
+                    }}
+                  />
+                  <span style={{ fontSize: "10.5px", color: "#64748b", marginTop: "3px", display: "block" }}>
+                    Official name on prints & exports
+                  </span>
+                </div>
+              </div>
+
+              {/* Designation & Central Authority */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px", marginBottom: "16px" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#1e293b", marginBottom: "5px" }}>
+                    Post / Designation:
+                  </label>
+                  <select
+                    value={editingFacultyModal.designation}
+                    onChange={(e) => setEditingFacultyModal({ ...editingFacultyModal, designation: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid #cbd5e1",
+                      fontSize: "13px",
+                      background: "white",
+                      boxSizing: "border-box"
+                    }}
+                  >
+                    {FACULTY_DESIGNATIONS.map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#1e293b", marginBottom: "5px" }}>
+                    Central Authority Role:
+                  </label>
+                  <select
+                    value={editingFacultyModal.centralAuthority}
+                    onChange={(e) => setEditingFacultyModal({ ...editingFacultyModal, centralAuthority: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      border: editingFacultyModal.centralAuthority !== "None" ? "1.5px solid #c084fc" : "1px solid #cbd5e1",
+                      background: editingFacultyModal.centralAuthority !== "None" ? "#faf5ff" : "white",
+                      color: editingFacultyModal.centralAuthority !== "None" ? "#7e22ce" : "#1e293b",
+                      fontWeight: editingFacultyModal.centralAuthority !== "None" ? 700 : 500,
+                      fontSize: "13px",
+                      boxSizing: "border-box"
+                    }}
+                  >
+                    {CENTRAL_AUTHORITIES.map((a) => (
+                      <option key={a} value={a}>{a === "None" ? "None (Regular Faculty)" : `Central Authority: ${a}`}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Max Lectures Cap */}
+              <div style={{ marginBottom: "18px" }}>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#1e293b", marginBottom: "5px" }}>
+                  Maximum Daily Lectures Limit (Cap):
+                </label>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <input
+                    type="number"
+                    min="1"
+                    max="6"
+                    value={editingFacultyModal.maxDailyLectures}
+                    onChange={(e) => setEditingFacultyModal({ ...editingFacultyModal, maxDailyLectures: e.target.value })}
+                    style={{
+                      width: "90px",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid #cbd5e1",
+                      fontSize: "13px",
+                      textAlign: "center",
+                      fontWeight: 700
+                    }}
+                  />
+                  <span style={{ fontSize: "12.5px", color: "#64748b" }}>
+                    hours per day (standard limit is 4 hrs/day for teaching staff)
+                  </span>
+                </div>
+              </div>
+
+              {/* Notice for Short Code change */}
+              {editingFacultyModal.name && editingFacultyModal.name !== editingFacultyModal.originalCode && (
+                <div style={{
+                  padding: "10px 14px",
+                  borderRadius: "6px",
+                  background: "#eff6ff",
+                  border: "1px solid #bfdbfe",
+                  marginBottom: "18px",
+                  fontSize: "12px",
+                  color: "#1e40af"
+                }}>
+                  ℹ️ <strong>Automatic Cascade:</strong> Changing short code from <strong>{editingFacultyModal.originalCode}</strong> to <strong>{editingFacultyModal.name}</strong> will automatically rename all teaching assignments across SY, TY, BTech courses, practical batches, fixed slots, and existing generated timetables!
+                </div>
+              )}
+
+              {/* Current Assignments Summary Box */}
+              {(() => {
+                const asgn = getFacultyAssignments(editingFacultyModal.originalCode);
+                return (
+                  <div style={{ background: "#f8fafc", padding: "12px 14px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "20px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: "4px" }}>
+                      Current Workload ({editingFacultyModal.originalCode})
+                    </div>
+                    <div style={{ fontSize: "12.5px", color: "#334155", lineHeight: "1.6" }}>
+                      • <strong>{asgn.totalHours} hours/week</strong> currently assigned<br />
+                      • Theory: {asgn.theorySubjects.length > 0 ? asgn.theorySubjects.map((s) => `${s.year} ${s.code}`).join(", ") : "None"}<br />
+                      • Labs: {asgn.labCourses.length > 0 ? asgn.labCourses.map((l) => `${l.year} ${l.code}`).join(", ") : "None"}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Action Buttons */}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                <button
+                  type="button"
+                  onClick={() => setEditingFacultyModal({ ...editingFacultyModal, isOpen: false })}
+                  className="btn-secondary"
+                  style={{ padding: "8px 16px", fontSize: "13px" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  style={{
+                    padding: "8px 22px",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    background: "#2563eb",
+                    borderColor: "#1d4ed8"
+                  }}
+                >
+                  ✓ Save Faculty Details
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Database Saved Timetables Modal */}
       {showDbModal && (

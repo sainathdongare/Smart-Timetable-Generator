@@ -1,5 +1,5 @@
 export const ritDepartmentPreset = {
-  version: "2026-27-TY-REVISED",
+  version: "2026-27-2LAB-4DAY-REVISED",
   config: {
     year: "",
     branch: "IT",
@@ -15,25 +15,25 @@ export const ritDepartmentPreset = {
     ]
   },
   faculties: [
-    { id: 1, name: "SUM", fullName: "Dr. S. U. Mane" },
-    { id: 2, name: "RSP", fullName: "Ms. R. S. Patil" },
-    { id: 3, name: "SPP", fullName: "Mr. S. P. Patil" },
-    { id: 4, name: "DTM", fullName: "Mr. D. T. Mane" },
-    { id: 5, name: "MAV", fullName: "Mrs. M. A. Vairat" },
-    { id: 6, name: "ARJ", fullName: "Mrs. A. R. Jamadagni" },
-    { id: 7, name: "PTS", fullName: "Mr. P. T. Sawant" },
-    { id: 8, name: "VUP", fullName: "Mr. V. U. Patil" },
-    { id: 9, name: "DBC", fullName: "Mr. D. B. Chougule" },
-    { id: 10, name: "MSK", fullName: "Mr. M. S. Kumbhar" },
-    { id: 11, name: "ACA", fullName: "Dr. A. C. Adamuthe" },
-    { id: 12, name: "MNM", fullName: "Mrs. M. N. More" },
-    { id: 13, name: "SEB", fullName: "Mrs. S. E. Bhosale" },
-    { id: 14, name: "DSB", fullName: "Dr. D. S. Bhosale" },
-    { id: 15, name: "TNK", fullName: "Ms. T. N. Kamble" },
-    { id: 16, name: "PSP", fullName: "Mrs. P. S. Patil" },
-    { id: 17, name: "VVJ", fullName: "Prof. V. V. Jagtap" },
-    { id: 18, name: "ANM", fullName: "Mrs. Dr. A. N. Mulla" },
-    { id: 19, name: "SPS", fullName: "Ms. S. P. Shinde" }
+    { id: 1, name: "SUM", fullName: "Dr. S. U. Mane", designation: "Associate Professor", centralAuthority: "None" },
+    { id: 2, name: "RSP", fullName: "Ms. R. S. Patil", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 3, name: "SPP", fullName: "Mr. S. P. Patil", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 4, name: "DTM", fullName: "Mr. D. T. Mane", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 5, name: "MAV", fullName: "Mrs. M. A. Vairat", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 6, name: "ARJ", fullName: "Mrs. A. R. Jamadagni", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 7, name: "PTS", fullName: "Mr. P. T. Sawant", designation: "Assistant Professor", centralAuthority: "TPC" },
+    { id: 8, name: "VUP", fullName: "Mr. V. U. Patil", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 9, name: "DBC", fullName: "Mr. D. B. Chougule", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 10, name: "MSK", fullName: "Mr. M. S. Kumbhar", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 11, name: "ACA", fullName: "Dr. A. C. Adamuthe", designation: "Professor", centralAuthority: "HOD" },
+    { id: 12, name: "MNM", fullName: "Mrs. M. N. More", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 13, name: "SEB", fullName: "Mrs. S. E. Bhosale", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 14, name: "DSB", fullName: "Dr. D. S. Bhosale", designation: "Associate Professor", centralAuthority: "None" },
+    { id: 15, name: "TNK", fullName: "Ms. T. N. Kamble", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 16, name: "PSP", fullName: "Mrs. P. S. Patil", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 17, name: "VVJ", fullName: "Prof. V. V. Jagtap", designation: "Assistant Professor", centralAuthority: "None" },
+    { id: 18, name: "ANM", fullName: "Mrs. Dr. A. N. Mulla", designation: "Associate Professor", centralAuthority: "None" },
+    { id: 19, name: "SPS", fullName: "Ms. S. P. Shinde", designation: "Assistant Professor", centralAuthority: "None" }
   ],
   rooms: [
     { id: 1, name: "CR-27", type: "THEORY" },
@@ -203,25 +203,21 @@ export const ritDepartmentPreset = {
         { day: "FRIDAY", period: 6, courseName: "I3-Mentoring", facultyName: "MSK", room: "IL5" }
       ],
       labCourses: [
-        { code: "PE-IV DLL", name: "Deep Learning Lab", faculty: "SPP", faculties: ["SPP"], batchFacultyMap: { I1: "SPP", I2: "SPP", I3: "SPP", I4: "SPP" }, preferredRoom: "IL5" },
-        { code: "FTWD", name: "Full Stack Web Tech Lab", faculty: "MAV", faculties: ["MAV", "ARJ"], batchFacultyMap: { I1: "MAV", I2: "ARJ", I3: "ARJ", I4: "MAV" }, preferredRoom: "IL3" }
+        { code: "PE-IV DLL", name: "Deep Learning Lab", faculty: "SPP", faculties: ["SPP", "DTM"], batchFacultyMap: { I1: "SPP", I2: "DTM", I3: "SPP", I4: "DTM" }, preferredRoom: "IL5" },
+        { code: "FTWD", name: "Full Stack Web Tech Lab", faculty: "MAV", faculties: ["MAV", "ARJ"], batchFacultyMap: { I1: "MAV", I2: "ARJ", I3: "MAV", I4: "ARJ" }, preferredRoom: "IL3" }
       ],
       practicals: [
-        // Monday P1-P2 (IL5, IL6 free from TY MP)
-        { day: "MONDAY", period: "P1-P2", batch: "I1", practical: "FTWD", faculty: "MAV", room: "IL5" },
-        { day: "MONDAY", period: "P1-P2", batch: "I2", practical: "PE-IV DLL", faculty: "SPP", room: "IL6" },
+        // Tuesday P1-P2 (Day 1: All 4 batches attend practicals simultaneously)
+        { day: "TUESDAY", period: "P1-P2", batch: "I1", practical: "FTWD", faculty: "MAV", room: "IL3" },
+        { day: "TUESDAY", period: "P1-P2", batch: "I2", practical: "FTWD", faculty: "ARJ", room: "IL2" },
+        { day: "TUESDAY", period: "P1-P2", batch: "I3", practical: "PE-IV DLL", faculty: "SPP", room: "IL5" },
+        { day: "TUESDAY", period: "P1-P2", batch: "I4", practical: "PE-IV DLL", faculty: "DTM", room: "IL6" },
 
-        // Tuesday P1-P2 (IL3, IL5 free)
-        { day: "TUESDAY", period: "P1-P2", batch: "I3", practical: "FTWD", faculty: "MAV", room: "IL3" },
-        { day: "TUESDAY", period: "P1-P2", batch: "I4", practical: "PE-IV DLL", faculty: "SPP", room: "IL5" },
-
-        // Wednesday P1-P2
+        // Wednesday P1-P2 (Day 2: All 4 batches rotate practicals)
         { day: "WEDNESDAY", period: "P1-P2", batch: "I1", practical: "PE-IV DLL", faculty: "SPP", room: "IL5" },
-        { day: "WEDNESDAY", period: "P1-P2", batch: "I2", practical: "FTWD", faculty: "MAV", room: "IL3" },
-
-        // Friday P3-P4
-        { day: "FRIDAY", period: "P3-P4", batch: "I3", practical: "PE-IV DLL", faculty: "SPP", room: "IL5" },
-        { day: "FRIDAY", period: "P3-P4", batch: "I4", practical: "FTWD", faculty: "MAV", room: "IL3" }
+        { day: "WEDNESDAY", period: "P1-P2", batch: "I2", practical: "PE-IV DLL", faculty: "DTM", room: "IL6" },
+        { day: "WEDNESDAY", period: "P1-P2", batch: "I3", practical: "FTWD", faculty: "MAV", room: "IL3" },
+        { day: "WEDNESDAY", period: "P1-P2", batch: "I4", practical: "FTWD", faculty: "ARJ", room: "IL2" }
       ]
     }
   }

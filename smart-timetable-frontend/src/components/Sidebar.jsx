@@ -1,304 +1,212 @@
 import { Link, useLocation } from "react-router-dom";
-import "./Sidebar.css";
+import { useAuth } from "../context/AuthContext";
 
-// Crisp modern SVG vector icons
-function BrandIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="2.5" y="3.5" width="19" height="18" rx="3.5" fill="#ffffff" stroke="#bfdbfe" strokeWidth="1" />
-      <path d="M2.5 8C2.5 6.067 4.067 4.5 6 4.5H18C19.933 4.5 21.5 6.067 21.5 8V9H2.5V8Z" fill="#1d4ed8" />
-      <rect x="6.5" y="2" width="2" height="4" rx="1" fill="#ffffff" />
-      <rect x="15.5" y="2" width="2" height="4" rx="1" fill="#ffffff" />
-      <rect x="5.5" y="11.5" width="3.5" height="2.5" rx="0.75" fill="#2563eb" />
-      <rect x="10.25" y="11.5" width="3.5" height="2.5" rx="0.75" fill="#93c5fd" />
-      <rect x="15" y="11.5" width="3.5" height="2.5" rx="0.75" fill="#38bdf8" />
-      <rect x="5.5" y="15.5" width="3.5" height="2.5" rx="0.75" fill="#cbd5e1" />
-      <rect x="10.25" y="15.5" width="3.5" height="2.5" rx="0.75" fill="#1d4ed8" />
-      <rect x="15" y="15.5" width="3.5" height="2.5" rx="0.75" fill="#60a5fa" />
-    </svg>
-  );
-}
-
-function DashboardIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
-      <rect x="3" y="14" width="7" height="7" rx="1.5" />
-    </svg>
-  );
-}
-
-function MasterTimetableIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="18" rx="2" />
-      <line x1="3" y1="10" x2="21" y2="10" />
-      <line x1="10" y1="4" x2="10" y2="22" />
-      <line x1="17" y1="10" x2="17" y2="22" />
-    </svg>
-  );
-}
-
-function ClassTimetablesIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
-      <path d="M6 12v5c3 3 9 3 12 0v-5" />
-    </svg>
-  );
-}
-
-function FacultyIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  );
-}
-
-function LabIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="3" width="20" height="14" rx="2" />
-      <line x1="8" y1="21" x2="16" y2="21" />
-      <line x1="12" y1="17" x2="12" y2="21" />
-      <line x1="6" y1="8" x2="10" y2="8" />
-    </svg>
-  );
-}
-
-function ManageInputsIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="4" y1="21" x2="4" y2="14" />
-      <line x1="4" y1="10" x2="4" y2="3" />
-      <line x1="12" y1="21" x2="12" y2="12" />
-      <line x1="12" y1="8" x2="12" y2="3" />
-      <line x1="20" y1="21" x2="20" y2="16" />
-      <line x1="20" y1="12" x2="20" y2="3" />
-      <line x1="1" y1="14" x2="7" y2="14" />
-      <line x1="9" y1="8" x2="15" y2="8" />
-      <line x1="17" y1="16" x2="23" y2="16" />
-    </svg>
-  );
-}
-
-function PortalIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10" />
-      <line x1="2" y1="12" x2="22" y2="12" />
-      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-    </svg>
-  );
-}
-
-function ChevronLeftIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="15 18 9 12 15 6" />
-    </svg>
-  );
-}
-
-function ChevronRightIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="9 18 15 12 9 6" />
-    </svg>
-  );
-}
-
-
-
-const NAV_GROUPS = [
-  {
-    title: "MAIN",
-    items: [
-      {
-        to: "/dashboard",
-        label: "Dashboard",
-        icon: DashboardIcon,
-        match: (path) => path === "/dashboard",
-      },
-    ],
-  },
-  {
-    title: "DEPARTMENT SCHEDULES",
-    items: [
-      {
-        to: "/master-timetable?view=ALL",
-        label: "Master Class Timetable",
-        icon: MasterTimetableIcon,
-        match: (path, search) =>
-          path === "/master-timetable" &&
-          !search.includes("inputs=open") &&
-          (search.includes("view=ALL") || !search || search === ""),
-      },
-      {
-        to: "/master-timetable?view=CLASS&class=SY",
-        label: "Class Timetables (SY/TY/BTech)",
-        icon: ClassTimetablesIcon,
-        match: (path, search) =>
-          path === "/master-timetable" &&
-          !search.includes("inputs=open") &&
-          search.includes("view=CLASS"),
-      },
-      {
-        to: "/master-timetable?view=FACULTY",
-        label: "Faculty Weekly Schedules",
-        icon: FacultyIcon,
-        match: (path, search) =>
-          path === "/master-timetable" &&
-          !search.includes("inputs=open") &&
-          search.includes("view=FACULTY"),
-      },
-      {
-        to: "/master-timetable?view=LAB",
-        label: "Computer Labs Matrix (IL1–IL6)",
-        icon: LabIcon,
-        match: (path, search) =>
-          path === "/master-timetable" &&
-          !search.includes("inputs=open") &&
-          search.includes("view=LAB"),
-      },
-    ],
-  },
-  {
-    title: "MANAGEMENT",
-    items: [
-      {
-        to: "/master-timetable?inputs=open",
-        label: "Manage Department Inputs",
-        icon: ManageInputsIcon,
-        isManage: true,
-        match: (path, search) =>
-          path === "/master-timetable" && search.includes("inputs=open"),
-      },
-    ],
-  },
-  {
-    title: "PORTAL",
-    items: [
-      {
-        to: "/",
-        label: "Welcome Page",
-        icon: PortalIcon,
-        isPortal: true,
-        match: (path) => path === "/",
-      },
-    ],
-  },
-];
-
-function Sidebar({
-  collapsed = false,
-  onToggleCollapse,
-  mobileOpen = false,
-  onCloseMobile,
-}) {
+function Sidebar() {
+  const { user, logout } = useAuth();
   const location = useLocation();
-  const path = location.pathname;
   const search = location.search;
+  const path = location.pathname;
+
+  const isActive = (targetPath, targetSearch = "") => {
+    if (path !== targetPath) return false;
+    if (!targetSearch) return !search || search === "";
+    const targetParams = new URLSearchParams(targetSearch);
+    const currentParams = new URLSearchParams(search);
+    for (const [key, val] of targetParams.entries()) {
+      if (currentParams.get(key) !== val) return false;
+    }
+    return true;
+  };
 
   return (
-    <aside
-      className={`sidebar ${collapsed ? "is-collapsed" : ""} ${
-        mobileOpen ? "mobile-open" : ""
-      }`}
-      aria-label="Sidebar Navigation"
-    >
-      {/* Brand Header */}
-      <div className="sidebar-header">
+    <aside className="sidebar">
+      <div className="sidebar-logo" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <img
+          src="/rit-logo.png"
+          alt="RIT Logo"
+          style={{ width: "36px", height: "36px", borderRadius: "6px", objectFit: "contain", flexShrink: 0 }}
+        />
+        <div>
+          <h2 style={{ fontSize: "15px", lineHeight: "1.2", margin: "0 0 2px" }}>Academic Time Table</h2>
+          <p>RIT Department of IT</p>
+        </div>
+      </div>
+
+      <nav className="sidebar-nav">
         <Link
           to="/dashboard"
-          className="sidebar-brand"
-          title="SmartSched Dashboard"
-          onClick={onCloseMobile}
+          className={path === "/dashboard" ? "nav-active" : ""}
         >
-          <div className="brand-icon-box">
-            <BrandIcon />
-          </div>
-          <div className="brand-info-wrap">
-            <h1 className="brand-title">SmartSched</h1>
-            <p className="brand-subtitle">RIT Department of IT</p>
-          </div>
+          🏠 Dashboard
         </Link>
 
-        {/* Desktop Collapse Toggle */}
-        {onToggleCollapse && (
-          <button
-            type="button"
-            className="sidebar-collapse-btn"
-            onClick={onToggleCollapse}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
-          </button>
-        )}
+        <div className="nav-section">CLASS SCHEDULES</div>
 
-      </div>
+        <Link
+          to="/master-timetable?view=ALL"
+          className={
+            path === "/master-timetable" && (search.includes("view=ALL") || !search)
+              ? "nav-active"
+              : ""
+          }
+        >
+          📊 Master Class Time Table
+        </Link>
 
-      {/* Navigation Groups */}
-      <nav className="sidebar-nav">
-        {NAV_GROUPS.map((group) => (
-          <div key={group.title} className="nav-group">
-            <div className="nav-section-label">{group.title}</div>
-            {group.items.map((item) => {
-              const active = item.match(path, search);
-              const Icon = item.icon;
-              let itemClass = "sidebar-nav-item";
-              if (active) itemClass += " nav-active";
-              if (item.isManage) itemClass += " nav-manage";
-              if (item.isPortal) itemClass += " nav-portal";
+        <Link
+          to="/master-timetable?view=CLASS&class=SY"
+          className={isActive("/master-timetable", "view=CLASS&class=SY") ? "nav-active" : ""}
+        >
+          🎓 Second Year
+        </Link>
 
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  className={itemClass}
-                  data-tooltip={item.label}
-                  title={collapsed ? item.label : undefined}
-                  onClick={onCloseMobile}
-                >
-                  <span className="item-icon">
-                    <Icon />
-                  </span>
-                  <span className="item-label">{item.label}</span>
-                </Link>
-              );
-            })}
-          </div>
-        ))}
+        <Link
+          to="/master-timetable?view=CLASS&class=TY"
+          className={isActive("/master-timetable", "view=CLASS&class=TY") ? "nav-active" : ""}
+        >
+          🎓 Third Year
+        </Link>
+
+        <Link
+          to="/master-timetable?view=CLASS&class=BTECH"
+          className={isActive("/master-timetable", "view=CLASS&class=BTECH") ? "nav-active" : ""}
+        >
+          🎓 Final year
+        </Link>
+
+        <div className="nav-section">FACULTY & WORKLOAD</div>
+
+        <Link
+          to="/master-timetable?view=LOAD_SHEET"
+          className={isActive("/master-timetable", "view=LOAD_SHEET") ? "nav-active" : ""}
+        >
+          📋 Total Staff Load Sheet
+        </Link>
+
+        <Link
+          to="/master-timetable?view=FACULTY_MASTER"
+          className={isActive("/master-timetable", "view=FACULTY_MASTER") ? "nav-active" : ""}
+        >
+          👨‍🏫 Master Personal faculty Time Table
+        </Link>
+
+        <Link
+          to="/master-timetable?view=FACULTY"
+          className={isActive("/master-timetable", "view=FACULTY") && !search.includes("view=FACULTY_MASTER") ? "nav-active" : ""}
+        >
+          👤 Personal Faculty Time Table
+        </Link>
+
+        <div className="nav-section">CLASSROOM SCHEDULES</div>
+
+        <Link
+          to="/master-timetable?view=ROOM_MASTER"
+          className={isActive("/master-timetable", "view=ROOM_MASTER") ? "nav-active" : ""}
+        >
+          🏛️ Master Classroom Time Table
+        </Link>
+
+        <Link
+          to="/master-timetable?view=ROOM"
+          className={isActive("/master-timetable", "view=ROOM") && !search.includes("view=ROOM_MASTER") ? "nav-active" : ""}
+        >
+          🚪 Personal Classroom Time Table
+        </Link>
+
+        <div className="nav-section">LABORATORY SCHEDULES</div>
+
+        <Link
+          to="/master-timetable?view=LAB&lab=ALL"
+          className={search.includes("view=LAB") && (search.includes("lab=ALL") || !search.includes("lab=")) ? "nav-active" : ""}
+        >
+          🔬 Lab Master Time Table
+        </Link>
+
+        <Link
+          to="/master-timetable?view=LAB&lab=IL1"
+          className={search.includes("view=LAB") && search.includes("lab=") && !search.includes("lab=ALL") ? "nav-active" : ""}
+        >
+          💻 Lab Personal Time Table
+        </Link>
+
+        <div className="nav-section">MANAGEMENT</div>
+
+        <Link
+          to="/master-timetable?inputs=open"
+          className={
+            "nav-manage" +
+            (isActive("/master-timetable", "inputs=open") ? " nav-active" : "")
+          }
+        >
+          ⚙️ Manage Department Inputs
+        </Link>
       </nav>
 
-      {/* Footer Area */}
-      <div className="sidebar-footer">
-        <div className="sidebar-footer-text">
-          <div className="sidebar-footer-title">
-            <span
-              className="sidebar-footer-status-dot"
-              title="System Operational"
-            />
-            <span>SmartSched</span>
+      {/* Admin User Profile & Sign Out */}
+      {user && (
+        <div style={{
+          padding: "16px 14px",
+          borderTop: "1px solid #1e293b",
+          marginTop: "auto",
+          background: "rgba(15, 23, 42, 0.6)"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+            <div style={{
+              width: "34px",
+              height: "34px",
+              borderRadius: "50%",
+              background: "linear-gradient(135deg, #facc15 0%, #eab308 100%)",
+              color: "#0f172a",
+              fontWeight: 800,
+              fontSize: "13px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0
+            }}>
+              {user.avatar || "A"}
+            </div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: "12.5px", fontWeight: 700, color: "#f8fafc", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {user.name}
+              </div>
+              <div style={{ fontSize: "11px", color: "#facc15", fontWeight: 600 }}>
+                {user.role}
+              </div>
+            </div>
           </div>
-          <div className="sidebar-footer-sub">Smart Timetable Generator</div>
-        </div>
 
-        {collapsed && (
-          <span
-            className="sidebar-footer-status-dot"
-            title="SmartSched Online"
-            style={{ margin: "auto" }}
-          />
-        )}
-      </div>
+          <button
+            onClick={logout}
+            style={{
+              width: "100%",
+              padding: "7px 10px",
+              background: "rgba(239, 68, 68, 0.12)",
+              border: "1px solid rgba(239, 68, 68, 0.3)",
+              color: "#fca5a5",
+              borderRadius: "6px",
+              fontSize: "12px",
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
+              transition: "all 0.15s ease"
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "#ef4444";
+              e.currentTarget.style.color = "#ffffff";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "rgba(239, 68, 68, 0.12)";
+              e.currentTarget.style.color = "#fca5a5";
+            }}
+          >
+            <span>🚪</span> Logout
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

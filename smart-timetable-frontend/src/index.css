@@ -28,7 +28,109 @@ body {
 .app,
 .app-layout {
   display: flex;
-  min-height: 100vh;
+  min-height: calc(100vh - 38px);
+}
+
+/* =====================================================
+   SIDEBAR
+   ===================================================== */
+
+.sidebar {
+  width: 252px;
+  min-height: calc(100vh - 38px);
+  background-color: #0f172a;
+  color: #e2e8f0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-right: 1px solid #1e293b;
+}
+
+.sidebar-logo {
+  padding: 22px 20px 18px;
+  border-bottom: 1px solid #1e293b;
+}
+
+.sidebar-logo h2 {
+  margin: 0 0 3px;
+  font-size: 16px;
+  font-weight: 800;
+  color: #f8fafc;
+  letter-spacing: -0.3px;
+}
+
+.sidebar-logo p {
+  margin: 0;
+  color: #64748b;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px;
+  gap: 2px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sidebar-nav a {
+  color: #94a3b8;
+  text-decoration: none;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.15s ease, color 0.15s ease;
+  line-height: 1.4;
+}
+
+.sidebar-nav a:hover {
+  background-color: #1e293b;
+  color: #e2e8f0;
+}
+
+.sidebar-nav a.nav-active {
+  background-color: #facc15;
+  color: #0f172a;
+  font-weight: 800;
+  box-shadow: 0 2px 10px rgba(250, 204, 21, 0.4);
+}
+
+.sidebar-nav a.nav-manage {
+  background-color: rgba(250, 204, 21, 0.12);
+  color: #fde047;
+  font-weight: 700;
+  border: 1px solid rgba(250, 204, 21, 0.35);
+  margin-top: 4px;
+}
+
+.sidebar-nav a.nav-manage:hover {
+  background-color: rgba(250, 204, 21, 0.22);
+  color: #fef08a;
+  border-color: rgba(250, 204, 21, 0.6);
+}
+
+.sidebar-nav a.nav-manage.nav-active {
+  background-color: #facc15;
+  color: #0f172a;
+  border-color: #facc15;
+  box-shadow: 0 2px 10px rgba(250, 204, 21, 0.4);
+}
+
+.nav-section {
+  color: #475569;
+  font-size: 10.5px;
+  font-weight: 700;
+  margin: 16px 12px 6px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
 }
 
 /* =====================================================
@@ -2597,6 +2699,88 @@ td button {
 }
 
 /* =====================================================
+   OFFICIAL INSTITUTIONAL PERSONAL TIMETABLE (RIT PRINT FORMAT)
+   ===================================================== */
+
+.official-personal-sheet-wrapper {
+  margin-bottom: 30px;
+}
+
+.official-timetable-sheet {
+  background: #ffffff;
+  color: #000000;
+  border: 2px solid #000000;
+  border-radius: 0;
+  margin: 0 auto 20px;
+  max-width: 1100px;
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+}
+
+.official-sheet-header {
+  text-align: center;
+  border-bottom: 1.5px solid #000000;
+  padding: 10px 14px;
+  line-height: 1.35;
+}
+
+.official-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-bottom: 1.5px solid #000000;
+  font-size: 11.5px;
+  color: #000000;
+}
+
+.official-summary-table td,
+.official-summary-table th {
+  border: 1px solid #000000;
+  padding: 4px 6px;
+  vertical-align: middle;
+}
+
+.official-grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  table-layout: fixed;
+  color: #000000;
+}
+
+.official-grid-table th,
+.official-grid-table td {
+  border: 1px solid #000000;
+  padding: 4px 2px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.official-grid-table thead th {
+  background: #ffffff;
+  font-weight: 700;
+  color: #000000;
+}
+
+.break-row-official {
+  font-weight: 700;
+  font-size: 12px;
+  text-align: center;
+  background: #ffffff;
+  border-top: 1.5px solid #000000 !important;
+  border-bottom: 1.5px solid #000000 !important;
+}
+
+.official-sheet-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 24px 60px 16px;
+  border-top: 1.5px solid #000000;
+  margin-top: 10px;
+  font-size: 13px;
+  color: #000000;
+}
+
+/* =====================================================
    PRINT STYLES
    ===================================================== */
 
@@ -2630,10 +2814,13 @@ td button {
   .horizontal-schedule-card,
   .perspective-header-card,
   .index-card,
-  .master-header-card {
+  .master-header-card,
+  .official-timetable-sheet {
     box-shadow: none !important;
-    border: 1px solid #000 !important;
+    border: 1.5px solid #000 !important;
     border-radius: 0 !important;
+    max-width: 100% !important;
+    margin: 0 !important;
   }
 
   .master-table th,
@@ -2647,5 +2834,11 @@ td button {
 
   .page-break {
     page-break-after: always;
+  }
+}
+
+@media screen {
+  .only-print {
+    display: none !important;
   }
 }
