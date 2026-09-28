@@ -408,7 +408,7 @@ public class MasterTimetableGenerator {
                 }
             } else if (yData.getLabCourses() != null && !yData.getLabCourses().isEmpty()) {
                 autoSchedulePracticalsForYear(yr, yData, days, periodsPerDay, timings,
-                        yearSchedules, occupiedFaculty, occupiedRooms, facultyDailyLoad, request.getRooms());
+                        yearSchedules, occupiedFaculty, occupiedRooms, facultyDailyLoad, request.getRooms(), request.getFaculties());
             }
         }
 
@@ -829,7 +829,8 @@ public class MasterTimetableGenerator {
             Map<String, Map<Integer, Set<String>>> occupiedFaculty,
             Map<String, Map<Integer, Set<String>>> occupiedRooms,
             Map<String, Map<String, Integer>> facultyDailyLoad,
-            List<Room> allRooms) {
+            List<Room> allRooms,
+            List<Faculty> allFaculties) {
 
         List<LabCourseDto> labCourses = yData.getLabCourses();
         if (labCourses == null || labCourses.isEmpty()) return;
@@ -889,7 +890,8 @@ public class MasterTimetableGenerator {
 
                     // Check if faculties and lab rooms for all batches in this block are free
                     boolean blockAvailable = true;
-                    List<String> assignedFaculties = new ArrayList<>();
+                    List<String> resolvedFaculties = new ArrayList<>();
+                    List<String> assignedFacultyNorms = new ArrayList<>();
                     List<String> assignedRooms = new ArrayList<>();
 
                     for (int bIdx = 0; bIdx < numBatches; bIdx++) {
@@ -908,12 +910,42 @@ public class MasterTimetableGenerator {
                         if (!normF.isEmpty()) {
                             if (occupiedFaculty.get(day).get(p1).contains(normF) ||
                                 occupiedFaculty.get(day).get(p2).contains(normF) ||
-                                assignedFaculties.contains(normF)) {
-                                blockAvailable = false;
-                                break;
+                                assignedFacultyNorms.contains(normF)) {
+                                // Find available alternative faculty from course.faculties or allFaculties
+                                String altFac = null;
+                                if (course.getFaculties() != null) {
+                                    for (String candidate : course.getFaculties()) {
+                                        String normCand = normalize(candidate);
+                                        if (!normCand.isEmpty() && !assignedFacultyNorms.contains(normCand) &&
+                                            !occupiedFaculty.get(day).get(p1).contains(normCand) &&
+                                            !occupiedFaculty.get(day).get(p2).contains(normCand)) {
+                                            altFac = candidate;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (altFac == null && allFaculties != null) {
+                                    for (Faculty f : allFaculties) {
+                                        String normCand = normalize(f.getName());
+                                        if (!normCand.isEmpty() && !assignedFacultyNorms.contains(normCand) &&
+                                            !occupiedFaculty.get(day).get(p1).contains(normCand) &&
+                                            !occupiedFaculty.get(day).get(p2).contains(normCand)) {
+                                            altFac = f.getName();
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (altFac != null) {
+                                    fac = altFac;
+                                    normF = normalize(fac);
+                                } else {
+                                    blockAvailable = false;
+                                    break;
+                                }
                             }
-                            assignedFaculties.add(normF);
+                            assignedFacultyNorms.add(normF);
                         }
+                        resolvedFaculties.add(fac);
 
                         // Room selection: preferred or next available distinct lab
                         String room = course.getBatchRoomMap() != null && course.getBatchRoomMap().containsKey(batchName)
@@ -961,11 +993,7 @@ public class MasterTimetableGenerator {
                                 int sIdx = (bIdx + cIdx) % numCourses;
                                 LabCourseDto course = labCourses.get(sIdx);
 
-                                String fac = course.getBatchFacultyMap() != null && course.getBatchFacultyMap().containsKey(batchName)
-                                        ? course.getBatchFacultyMap().get(batchName)
-                                        : (course.getFaculties() != null && !course.getFaculties().isEmpty()
-                                                ? course.getFaculties().get(bIdx % course.getFaculties().size())
-                                                : course.getFaculty());
+                                String fac = bIdx < resolvedFaculties.size() ? resolvedFaculties.get(bIdx) : course.getFaculty();
                                 String room = bIdx < assignedRooms.size() ? assignedRooms.get(bIdx) : course.getPreferredRoom();
 
                                 SubEntry sub = new SubEntry(batchName, course.getCode(), fac, room);
