@@ -1,0 +1,26 @@
+flowchart TD
+    Start([Start: Theory Scheduling & Finalization]) --> P1[Pass 1 — Strict Ideal Scheduling:<br/>• Max 1 period/subject/day & max 1 theory/teacher/day in class<br/>• Enforce global daily teacher cap & strictly no consecutive periods<br/>• Hard classroom, faculty, and slot availability verification]
+
+    P1 --> D1{Are All Theory Periods<br/>Assigned in Pass 1?}
+
+    D1 -- No --> P2[Pass 2 — Balanced Relaxation Scheduling:<br/>• Relax per-class teacher limit to max 2 theory periods/day<br/>• Preserve separate days for subjects & global daily teacher cap<br/>• Strictly enforce zero consecutive periods & verify availability]
+
+    D1 -- Yes --> Merge[Assemble Final Timetable]
+
+    P2 --> D2{Are All Theory Periods<br/>Assigned in Pass 2?}
+
+    D2 -- No --> P3[Pass 3 — Fallback Scheduling:<br/>• Relax subject-day dispersion, class limit & daily cap<br/>• Strictly retain no-consecutive-periods rule<br/>• Hard classroom, faculty, and slot availability verification]
+
+    D2 -- Yes --> Merge
+
+    P3 --> D3{Any Theory Periods<br/>Still Unassigned?}
+
+    D3 -- Yes --> Diag[Record Bottleneck Errors & Diagnostics:<br/>• Scan vacant periods and identify conflicting teachers/rooms<br/>• Log error to conflictLog and append BOTTLENECK to diagnostics]
+
+    D3 -- No --> Merge
+
+    Diag --> Merge
+
+    Merge[Assemble Final Timetable:<br/>• Flatten schedules across all cohorts SY, TY, BTech<br/>• Fill remaining empty periods with 'FREE' &lt;—&gt;<br/>• Calculate total weekly contact hours per cohort] --> Finalize[Finalize & Return Response:<br/>• Append SUCCESS diagnostic if conflict log is empty<br/>• Set response status = FINALIZED &lt;even if unplaced periods exist&gt;<br/>• Return complete MasterTimetableResponse object]
+
+    Finalize --> EndNode([End])

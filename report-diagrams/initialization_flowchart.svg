@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 1420" width="850" height="1420">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .box { fill: #ffffff; stroke: #111827; stroke-width: 1.75; }
+      .box-alt { fill: #f9fafb; stroke: #111827; stroke-width: 1.75; }
+      .decision { fill: #ffffff; stroke: #111827; stroke-width: 1.75; }
+      .terminal { fill: #f3f4f6; stroke: #111827; stroke-width: 2; }
+      .warn-box { fill: #ffffff; stroke: #111827; stroke-width: 1.5; stroke-dasharray: 4 3; }
+      .arrow { stroke: #111827; stroke-width: 1.75; fill: none; marker-end: url(#arrowhead); }
+      .arrow-loop { stroke: #111827; stroke-width: 1.5; fill: none; marker-end: url(#arrowhead); stroke-dasharray: 5 3; }
+      .text-title { font-family: 'Segoe UI', Arial, Helvetica, sans-serif; font-size: 13.5px; font-weight: bold; fill: #111827; text-anchor: middle; }
+      .text-body { font-family: 'Segoe UI', Arial, Helvetica, sans-serif; font-size: 11.5px; fill: #374151; text-anchor: middle; }
+      .text-mono { font-family: 'Consolas', 'Courier New', monospace; font-size: 11px; fill: #1f2937; text-anchor: middle; }
+      .label-yes-no { font-family: 'Segoe UI', Arial, Helvetica, sans-serif; font-size: 12px; font-weight: bold; fill: #111827; text-anchor: middle; }
+    </style>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#111827" />
+    </marker>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="850" height="1420" class="bg" />
+
+  <!-- 1. Start Node -->
+  <rect x="295" y="30" width="260" height="48" rx="24" ry="24" class="terminal" />
+  <text x="425" y="59" class="text-title">Start: generate(request)</text>
+
+  <!-- Arrow: Start -> CheckReq -->
+  <line x1="425" y1="78" x2="425" y2="118" class="arrow" />
+
+  <!-- 2. Decision: Validate Request & Config -->
+  <polygon points="425,118 575,168 425,218 275,168" class="decision" />
+  <text x="425" y="163" class="text-body" font-weight="bold">Is request == null OR</text>
+  <text x="425" y="179" class="text-body" font-weight="bold">request.getConfig() == null?</text>
+
+  <!-- Decision Branch: Yes -> Early Exit -->
+  <line x1="575" y1="168" x2="650" y2="168" class="arrow" />
+  <text x="612" y="158" class="label-yes-no">Yes</text>
+
+  <rect x="650" y="143" width="170" height="50" class="box" />
+  <text x="735" y="165" class="text-body">Set response status =</text>
+  <text x="735" y="180" class="text-body" font-weight="bold">NOT_STARTED</text>
+
+  <line x1="735" y1="193" x2="735" y2="233" class="arrow" />
+
+  <rect x="650" y="233" width="170" height="44" rx="22" ry="22" class="terminal" />
+  <text x="735" y="260" class="text-title">Return response (Exit)</text>
+
+  <!-- Decision Branch: No -> Extract Config -->
+  <line x1="425" y1="218" x2="425" y2="268" class="arrow" />
+  <text x="442" y="243" class="label-yes-no">No</text>
+
+  <!-- 3. Process: Extract Configuration -->
+  <rect x="235" y="268" width="380" height="80" class="box" />
+  <text x="425" y="292" class="text-title">Extract Configuration Parameters</text>
+  <text x="425" y="312" class="text-body">Retrieve workingDays, periodTimings, periodsPerDay</text>
+  <text x="425" y="330" class="text-mono">totalWeeklySlots = days.size × periodsPerDay</text>
+
+  <!-- Arrow: ExtractConfig -> InitState -->
+  <line x1="425" y1="348" x2="425" y2="388" class="arrow" />
+
+  <!-- 4. Process: Initialize State Structures -->
+  <rect x="205" y="388" width="440" height="115" class="box-alt" />
+  <text x="425" y="412" class="text-title">Initialize Global Department Tracking Structures</text>
+  <text x="425" y="434" class="text-body">• occupiedFaculty[day][period] ← empty Set&lt;String&gt;</text>
+  <text x="425" y="452" class="text-body">• occupiedRooms[day][period] ← empty Set&lt;String&gt;</text>
+  <text x="425" y="470" class="text-body">• yearSchedules[year][day][period] ← empty Map (SY, TY, BTech)</text>
+  <text x="425" y="488" class="text-body">• facultyMaxDailyCaps &amp; facultyDailyLoad[faculty][day] = 0</text>
+
+  <!-- Arrow: InitState -> LoopCohort -->
+  <line x1="425" y1="503" x2="425" y2="543" class="arrow" />
+
+  <!-- 5. Process: Loop Cohort Demand Estimation -->
+  <rect x="215" y="543" width="420" height="85" class="box" />
+  <text x="425" y="567" class="text-title">Pre-Generation Capacity Check: For Each Cohort</text>
+  <text x="425" y="587" class="text-body">Iterate academic years: ["SY", "TY", "BTECH"]</text>
+  <text x="425" y="607" class="text-mono">estimated = (fixed - overlap) + practicals + theoryRequested</text>
+
+  <!-- Arrow: LoopCohort -> CheckCapacity -->
+  <line x1="425" y1="628" x2="425" y2="668" class="arrow" />
+
+  <!-- 6. Decision: Capacity Overload Check -->
+  <polygon points="425,668 585,723 425,778 265,723" class="decision" />
+  <text x="425" y="718" class="text-body" font-weight="bold">Is totalEstimated &gt;</text>
+  <text x="425" y="735" class="text-body" font-weight="bold">totalWeeklySlots?</text>
+
+  <!-- Decision Branch: Yes -> Warning (Continues) -->
+  <line x1="585" y1="723" x2="650" y2="723" class="arrow" />
+  <text x="615" y="713" class="label-yes-no">Yes</text>
+
+  <rect x="650" y="693" width="175" height="60" class="warn-box" />
+  <text x="737" y="715" class="text-body" font-weight="bold">Log CAPACITY_EXCEEDED</text>
+  <text x="737" y="731" class="text-body">warning to diagnostics</text>
+  <text x="737" y="746" class="text-body" font-style="italic">(Execution continues)</text>
+
+  <!-- Warning Merge path back to main trunk -->
+  <polyline points="737,753 737,818 425,818" class="arrow" />
+
+  <!-- Decision Branch: No -> Continue -->
+  <line x1="425" y1="778" x2="425" y2="858" class="arrow" />
+  <text x="442" y="800" class="label-yes-no">No</text>
+
+  <!-- 7. Decision: More Cohorts? -->
+  <polygon points="425,858 565,903 425,948 285,903" class="decision" />
+  <text x="425" y="908" class="text-body" font-weight="bold">More cohorts to check?</text>
+
+  <!-- Decision Branch: Yes -> Loop Back -->
+  <polyline points="285,903 140,903 140,585 215,585" class="arrow-loop" />
+  <text x="220" y="893" class="label-yes-no">Yes</text>
+
+  <!-- Decision Branch: No -> Stage 1 -->
+  <line x1="425" y1="948" x2="425" y2="993" class="arrow" />
+  <text x="442" y="970" class="label-yes-no">No</text>
+
+  <!-- 8. Process: Stage 1 - Lock Faculty Unavailability -->
+  <rect x="215" y="993" width="420" height="105" class="box" />
+  <text x="425" y="1018" class="text-title">Stage 1: Lock Faculty Unavailability</text>
+  <text x="425" y="1040" class="text-body">Iterate request.facultyUnavailability:</text>
+  <text x="425" y="1058" class="text-body">Validate un.getDay() != null AND 1 &lt;= un.getPeriod() &lt;= periodsPerDay</text>
+  <text x="425" y="1076" class="text-mono">occupiedFaculty[day][period].add(normalize(faculty.name))</text>
+
+  <!-- Arrow: Stage 1 -> Stage 2 -->
+  <line x1="425" y1="1098" x2="425" y2="1138" class="arrow" />
+
+  <!-- 9. Process: Stage 2 - Register External FY Loads -->
+  <rect x="205" y="1138" width="440" height="125" class="box-alt" />
+  <text x="425" y="1163" class="text-title">Stage 2: Register External FY Loads</text>
+  <text x="425" y="1185" class="text-body">Iterate request.externalLoads (FY-EEDP, FY-PPS, FY-PCC):</text>
+  <text x="425" y="1203" class="text-mono">• occupiedFaculty[day][period].add(normalize(ext.facultyCode))</text>
+  <text x="425" y="1221" class="text-mono">• incrementFacultyLoad(facultyDailyLoad, facultyCode, day)</text>
+  <text x="425" y="1239" class="text-body">• Categorize and attach to response.externalLoads map</text>
+
+  <!-- Arrow: Stage 2 -> Stage 3 Proceed -->
+  <line x1="425" y1="1263" x2="425" y2="1303" class="arrow" />
+
+  <!-- 10. Pass Control: Stage 3 Transition -->
+  <rect x="245" y="1303" width="360" height="60" rx="30" ry="30" class="terminal" />
+  <text x="425" y="1327" class="text-body">Pass Control to Stage 3:</text>
+  <text x="425" y="1345" class="text-title">Fixed-Session Scheduling &amp; Collision Check</text>
+</svg>

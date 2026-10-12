@@ -1,0 +1,25 @@
+flowchart TD
+    Start([Start: generate(request)]) --> CheckReq{Is request == null OR<br/>request.getConfig() == null?}
+    
+    CheckReq -- Yes --> SetNotStarted[Set response status = NOT_STARTED]
+    SetNotStarted --> ReturnExit([Return response &lt;Exit&gt;])
+
+    CheckReq -- No --> ExtractConfig[Extract Configuration Parameters:<br/>- Retrieve workingDays, periodTimings, periodsPerDay<br/>- Calculate totalWeeklySlots = days.size × periodsPerDay]
+
+    ExtractConfig --> InitState[Initialize Department Tracking Structures:<br/>- occupiedFaculty Map&lt;day, Map&lt;period, Set&lt;faculty&gt;&gt;&gt;<br/>- occupiedRooms Map&lt;day, Map&lt;period, Set&lt;room&gt;&gt;&gt;<br/>- yearSchedules Map&lt;year, Map&lt;day, Map&lt;period, cell&gt;&gt;&gt;<br/>- facultyMaxDailyCaps &amp; facultyDailyLoad&lt;faculty, day&gt; = 0]
+
+    InitState --> LoopCohort[Pre-Generation Capacity Check:<br/>For each cohort in ['SY', 'TY', 'BTECH']<br/>Calculate estimated = (fixed - overlap) + practical + theory]
+
+    LoopCohort --> CheckCapacity{Is totalEstimated &gt;<br/>totalWeeklySlots?}
+
+    CheckCapacity -- Yes --> WarnCapacity[Append CAPACITY_EXCEEDED<br/>warning to diagnostics<br/>&lt;Execution Continues&gt;]
+    CheckCapacity -- No --> MergeCapacity[Proceed]
+    WarnCapacity --> MergeCapacity
+
+    MergeCapacity --> MoreCohorts{More cohorts<br/>to verify?}
+    MoreCohorts -- Yes --> LoopCohort
+    MoreCohorts -- No --> Stage1[Stage 1: Lock Faculty Unavailability<br/>Iterate request.facultyUnavailability:<br/>- Validate day and 1 &lt;= period &lt;= periodsPerDay<br/>- Add faculty to occupiedFaculty[day][period]]
+
+    Stage1 --> Stage2[Stage 2: Register External FY Loads<br/>Iterate request.externalLoads (FY-EEDP, FY-PPS, FY-PCC):<br/>- Add faculty to occupiedFaculty[day][period]<br/>- incrementFacultyLoad(facultyDailyLoad, faculty, day)<br/>- Categorize and attach to response.externalLoads map]
+
+    Stage2 --> Stage3([Pass Control to Stage 3:<br/>Fixed-Session Scheduling &amp; Collision Check])

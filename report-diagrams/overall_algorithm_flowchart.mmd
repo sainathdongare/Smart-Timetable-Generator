@@ -1,0 +1,18 @@
+flowchart TD
+    Start([Start]) --> S2[Receive Timetable Inputs]
+    S2 --> S3[Validate Inputs & Check Timetable Capacity]
+    S3 --> S4[Initialize Faculty, Classroom & Class Occupancy Tracking]
+    S4 --> S5[Mark Faculty Unavailability & Register External Loads]
+    S5 --> S6[Allocate Fixed Sessions & Record Any Clashes]
+    S6 --> S7[Schedule Practical Sessions]
+    S7 --> S8[Schedule Theory Sessions via Three Passes:<br/>Strict, Balanced, and Fallback]
+    
+    S8 --> S9{Were All Sessions<br/>Scheduled?}
+    
+    S9 -- No --> S10[Record Diagnostics & Bottlenecks]
+    S9 -- Yes --> S11[Assemble Final Timetable]
+    S10 --> S11
+    
+    S11 --> S12[Mark Empty Slots as FREE]
+    S12 --> S13[Return Timetable & Generation Status<br/>&lt;Sets status = FINALIZED&gt;]
+    S13 --> EndNode([End])

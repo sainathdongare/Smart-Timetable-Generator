@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 1160" width="680" height="1160">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .box { fill: #ffffff; stroke: #0f172a; stroke-width: 1.75; }
+      .box-alt { fill: #f8fafc; stroke: #0f172a; stroke-width: 1.75; }
+      .warn-box { fill: #ffffff; stroke: #0f172a; stroke-width: 1.5; stroke-dasharray: 4 2; }
+      .decision { fill: #ffffff; stroke: #0f172a; stroke-width: 1.75; }
+      .terminal { fill: #f1f5f9; stroke: #0f172a; stroke-width: 2; }
+      .arrow { stroke: #0f172a; stroke-width: 1.75; fill: none; marker-end: url(#arrowhead); }
+      .arrow-bypass { stroke: #0f172a; stroke-width: 1.5; fill: none; stroke-dasharray: 5 3; marker-end: url(#arrowhead); }
+      .text-title { font-family: 'Segoe UI', Arial, sans-serif; font-size: 12.5px; font-weight: bold; fill: #0f172a; text-anchor: middle; }
+      .text-body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; fill: #334155; text-anchor: middle; }
+      .text-italic { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10px; font-style: italic; fill: #64748b; text-anchor: middle; }
+      .label-decision { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; font-weight: bold; fill: #0f172a; text-anchor: middle; }
+    </style>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#0f172a" />
+    </marker>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="680" height="1160" class="bg" />
+
+  <!-- 1. Start Node -->
+  <rect x="250" y="30" width="180" height="40" rx="20" ry="20" class="terminal" />
+  <text x="340" y="55" class="text-title">Start</text>
+
+  <!-- Arrow 1 -> 2 -->
+  <line x1="340" y1="70" x2="340" y2="100" class="arrow" />
+
+  <!-- 2. Receive Inputs -->
+  <rect x="150" y="100" width="380" height="44" class="box" />
+  <text x="340" y="127" class="text-body" font-weight="bold">Receive Timetable Inputs</text>
+
+  <!-- Arrow 2 -> 3 -->
+  <line x1="340" y1="144" x2="340" y2="174" class="arrow" />
+
+  <!-- 3. Validate Inputs & Check Capacity -->
+  <rect x="150" y="174" width="380" height="44" class="box" />
+  <text x="340" y="201" class="text-body" font-weight="bold">Validate Inputs &amp; Check Timetable Capacity</text>
+
+  <!-- Arrow 3 -> 4 -->
+  <line x1="340" y1="218" x2="340" y2="248" class="arrow" />
+
+  <!-- 4. Initialize Tracking -->
+  <rect x="150" y="248" width="380" height="44" class="box-alt" />
+  <text x="340" y="275" class="text-body" font-weight="bold">Initialize Faculty, Classroom &amp; Class Occupancy</text>
+
+  <!-- Arrow 4 -> 5 -->
+  <line x1="340" y1="292" x2="340" y2="322" class="arrow" />
+
+  <!-- 5. Unavailability & External Loads -->
+  <rect x="150" y="322" width="380" height="44" class="box" />
+  <text x="340" y="349" class="text-body" font-weight="bold">Mark Faculty Unavailability &amp; External Loads</text>
+
+  <!-- Arrow 5 -> 6 -->
+  <line x1="340" y1="366" x2="340" y2="396" class="arrow" />
+
+  <!-- 6. Allocate Fixed Sessions -->
+  <rect x="150" y="396" width="380" height="44" class="box" />
+  <text x="340" y="423" class="text-body" font-weight="bold">Allocate Fixed Sessions &amp; Record Any Clashes</text>
+
+  <!-- Arrow 6 -> 7 -->
+  <line x1="340" y1="440" x2="340" y2="470" class="arrow" />
+
+  <!-- 7. Schedule Practical Sessions -->
+  <rect x="150" y="470" width="380" height="44" class="box" />
+  <text x="340" y="497" class="text-body" font-weight="bold">Schedule Practical Sessions (2-Period Blocks)</text>
+
+  <!-- Arrow 7 -> 8 -->
+  <line x1="340" y1="514" x2="340" y2="544" class="arrow" />
+
+  <!-- 8. Schedule Theory Sessions via Three Passes -->
+  <rect x="140" y="544" width="400" height="52" class="box-alt" />
+  <text x="340" y="566" class="text-title">Schedule Theory Sessions via Three Passes</text>
+  <text x="340" y="583" class="text-body">(Strict, Balanced, and Fallback)</text>
+
+  <!-- Arrow 8 -> 9 -->
+  <line x1="340" y1="596" x2="340" y2="630" class="arrow" />
+
+  <!-- 9. Decision Diamond: Were All Sessions Scheduled? -->
+  <polygon points="340,630 490,670 340,710 190,670" class="decision" />
+  <text x="340" y="666" class="text-body" font-weight="bold">Were All Sessions</text>
+  <text x="340" y="680" class="text-body" font-weight="bold">Scheduled?</text>
+
+  <!-- Branch No: 9 -> 10 -->
+  <line x1="340" y1="710" x2="340" y2="745" class="arrow" />
+  <text x="355" y="728" class="label-decision">No</text>
+
+  <!-- 10. Record Diagnostics & Bottlenecks -->
+  <rect x="150" y="745" width="380" height="44" class="warn-box" />
+  <text x="340" y="772" class="text-body" font-weight="bold">Record Diagnostics &amp; Bottlenecks</text>
+
+  <!-- Arrow 10 -> Merge at 11 -->
+  <line x1="340" y1="789" x2="340" y2="840" class="arrow" />
+
+  <!-- Branch Yes: Bypass 10 to Merge at 11 -->
+  <polyline points="490,670 570,670 570,820 340,820" class="arrow-bypass" />
+  <text x="525" y="660" class="label-decision">Yes</text>
+
+  <!-- Arrow to 11 -->
+  <line x1="340" y1="820" x2="340" y2="845" class="arrow" />
+
+  <!-- 11. Assemble Final Timetable -->
+  <rect x="150" y="845" width="380" height="44" class="box" />
+  <text x="340" y="872" class="text-body" font-weight="bold">Assemble Final Timetable</text>
+
+  <!-- Arrow 11 -> 12 -->
+  <line x1="340" y1="889" x2="340" y2="919" class="arrow" />
+
+  <!-- 12. Mark Empty Slots as FREE -->
+  <rect x="150" y="919" width="380" height="44" class="box" />
+  <text x="340" y="946" class="text-body" font-weight="bold">Mark Empty Slots as FREE</text>
+
+  <!-- Arrow 12 -> 13 -->
+  <line x1="340" y1="963" x2="340" y2="993" class="arrow" />
+
+  <!-- 13. Return Timetable & Status -->
+  <rect x="150" y="993" width="380" height="48" class="box-alt" />
+  <text x="340" y="1014" class="text-title">Return Timetable &amp; Generation Status</text>
+  <text x="340" y="1031" class="text-italic">(Sets status = FINALIZED)</text>
+
+  <!-- Arrow 13 -> 14 -->
+  <line x1="340" y1="1041" x2="340" y2="1071" class="arrow" />
+
+  <!-- 14. End Node -->
+  <rect x="250" y="1071" width="180" height="40" rx="20" ry="20" class="terminal" />
+  <text x="340" y="1096" class="text-title">End</text>
+</svg>

@@ -1,0 +1,25 @@
+flowchart TD
+    Start([Start: Fixed & Practical Scheduling]) --> S1[1. Allocate Fixed Sessions & Record Any Clashes]
+    
+    S1 --> S2{2. Are Practical Sessions<br/>Provided Explicitly?}
+    
+    S2 -- Yes --> S3[3. Schedule Explicit Practical Batches<br/>&lt;Protects fixed slots&gt;]
+    S3 --> S9{9. All Lab Sessions Done OR<br/>Available Options Exhausted?}
+    
+    S2 -- No --> S4{4. Are Lab Courses Present<br/>for Auto-Scheduling?}
+    
+    S4 -- No: Skip --> EndStage([10. Proceed to Theory Scheduling])
+    
+    S4 -- Yes --> S5[5. Select Available 2-Period Practical Block<br/>Pick unused day & verify class free across both periods]
+    
+    S5 --> S6{6. Are Required Faculty &<br/>Lab Rooms Available?}
+    
+    S6 -- Yes --> S7[7. Assign Batches & Reserve Lab Resources<br/>Rotate courses across batches & mark resources occupied]
+    
+    S6 -- No --> S8[8. Fallback Search:<br/>Alternate Teacher, Lab, or Reject Block]
+    
+    S7 --> S9
+    S8 --> S9
+    
+    S9 -- No: Next Session / Retry --> S5
+    S9 -- Yes: Complete / Exhausted --> EndStage

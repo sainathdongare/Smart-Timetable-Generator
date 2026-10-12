@@ -19,6 +19,7 @@ function TopContactBar({ sidebarOpen, onToggleSidebar }) {
 
   return (
     <header
+      className="no-print"
       style={{
         position: "sticky",
         top: 0,

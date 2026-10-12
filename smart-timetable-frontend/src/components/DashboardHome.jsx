@@ -1,19 +1,25 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { ritDepartmentPreset } from "../data/ritDepartmentPreset";
+import * as XLSX from "xlsx";
 
 function DashboardHome() {
   const { user } = useAuth();
 
   const [activeDetailSection, setActiveDetailSection] = useState("FACULTY"); // "FACULTY" | "CLASSROOM" | "LAB"
   const [selectedFacultyFilter, setSelectedFacultyFilter] = useState("ALL");
+  const [editingFacultyId, setEditingFacultyId] = useState(null);
+  const [editForm, setEditForm] = useState({ fullName: "", initials: "", designation: "", empId: "", role: "" });
+
+  const [editingRoomId, setEditingRoomId] = useState(null);
+  const [editRoomForm, setEditRoomForm] = useState({ name: "", capacity: 75, type: "CLASSROOM", floor: "" });
 
   const [inputsData, setInputsData] = useState(() => {
     try {
       const savedInputs = localStorage.getItem("customMasterPayload");
       if (savedInputs) return JSON.parse(savedInputs);
-    } catch (e) {}
+    } catch (e) { }
     return ritDepartmentPreset;
   });
 
@@ -21,7 +27,7 @@ function DashboardHome() {
     try {
       const savedMaster = localStorage.getItem("masterTimetableData");
       if (savedMaster) return JSON.parse(savedMaster);
-    } catch (e) {}
+    } catch (e) { }
     return null;
   });
 
@@ -51,7 +57,7 @@ function DashboardHome() {
           conflictCount = mst.conflictLog.length;
         }
       }
-    } catch (e) {}
+    } catch (e) { }
 
     return { facultyCount, labCount, totalContactHours, conflictCount };
   });
@@ -79,8 +85,241 @@ function DashboardHome() {
         }
         setMetrics({ facultyCount, labCount, totalContactHours, conflictCount });
       }
-    } catch (e) {}
+    } catch (e) { }
   }, []);
+
+  const handleAddNewRoom = (defaultType = "CLASSROOM") => {
+    setEditingRoomId("NEW_" + defaultType);
+    setEditRoomForm({ name: "", capacity: 75, type: defaultType, floor: "" });
+  };
+
+  const handleSaveRoom = (roomId) => {
+    const currentRooms = [...(inputsData.rooms || ritDepartmentPreset.rooms)];
+
+    if (roomId.startsWith("NEW_")) {
+      if (!editRoomForm.name.trim()) {
+        alert("Room name is required.");
+        return;
+      }
+      const newRoom = {
+        name: editRoomForm.name.trim(),
+        capacity: parseInt(editRoomForm.capacity, 10) || 75,
+        type: editRoomForm.type,
+        floor: editRoomForm.floor || ""
+      };
+      if (currentRooms.some(r => r.name.toLowerCase() === newRoom.name.toLowerCase())) {
+        alert("A room with this name already exists!");
+        return;
+      }
+      currentRooms.unshift(newRoom);
+    } else {
+      const idx = currentRooms.findIndex(r => r.name === roomId);
+      if (idx >= 0) {
+        currentRooms[idx] = { ...currentRooms[idx], name: editRoomForm.name.trim(), capacity: parseInt(editRoomForm.capacity, 10) || 75, floor: editRoomForm.floor };
+      }
+    }
+
+    const newInputs = { ...inputsData, rooms: currentRooms };
+    setInputsData(newInputs);
+    localStorage.setItem("customMasterPayload", JSON.stringify(newInputs));
+    setEditingRoomId(null);
+  };
+
+  const handleAddNewFaculty = () => {
+    setEditingFacultyId("NEW");
+    setEditForm({ fullName: "", initials: "", designation: "", empId: "", role: "" });
+  };
+
+  const handleSaveFaculty = (facultyNameCode) => {
+    const currentFaculties = [...(inputsData.faculties || ritDepartmentPreset.faculties)];
+
+    if (facultyNameCode === "NEW") {
+      if (!editForm.fullName.trim()) {
+        alert("Faculty name is required.");
+        return;
+      }
+      const words = editForm.fullName.replace(/Dr\.|Mr\.|Mrs\.|Prof\./gi, "").trim().split(/[\s.]+/);
+      const shortcode = editForm.initials.trim() || words.map(w => w?.[0] || '').join('').substring(0, 3).toUpperCase();
+      const newFaculty = {
+        id: Date.now(),
+        name: shortcode || `F${Date.now()}`,
+        fullName: editForm.fullName,
+        designation: editForm.designation || "Assistant Professor",
+        empId: editForm.empId || "",
+        role: editForm.role || "",
+        targetLoad: 0,
+        fyLoad: 0,
+        ugLoad: 0,
+        pgLoad: 0,
+        centralAuthority: "None"
+      };
+      currentFaculties.unshift(newFaculty);
+    } else {
+      const idx = currentFaculties.findIndex(f => f.name === facultyNameCode);
+      if (idx >= 0) {
+        currentFaculties[idx] = {
+          ...currentFaculties[idx],
+          fullName: editForm.fullName,
+          name: editForm.initials.trim() || currentFaculties[idx].name,
+          designation: editForm.designation,
+          empId: editForm.empId,
+          role: editForm.role
+        };
+      }
+    }
+
+    const newInputs = { ...inputsData, faculties: currentFaculties };
+    setInputsData(newInputs);
+    localStorage.setItem("customMasterPayload", JSON.stringify(newInputs));
+    setEditingFacultyId(null);
+  };
+
+  const handleDeleteFaculty = (facultyNameCode) => {
+    if (window.confirm("Are you sure you want to delete this faculty member?")) {
+      const currentFaculties = [...(inputsData.faculties || ritDepartmentPreset.faculties)];
+      const updatedFaculties = currentFaculties.filter(f => f.name !== facultyNameCode);
+      const newInputs = { ...inputsData, faculties: updatedFaculties };
+      setInputsData(newInputs);
+      localStorage.setItem("customMasterPayload", JSON.stringify(newInputs));
+    }
+  };
+
+  const handleDeleteRoom = (roomId) => {
+    if (window.confirm("Are you sure you want to delete this room/lab?")) {
+      const currentRooms = [...(inputsData.rooms || ritDepartmentPreset.rooms)];
+      const updatedRooms = currentRooms.filter(r => r.name !== roomId);
+      const newInputs = { ...inputsData, rooms: updatedRooms };
+      setInputsData(newInputs);
+      localStorage.setItem("customMasterPayload", JSON.stringify(newInputs));
+    }
+  };
+
+  const fileInputRef = useRef(null);
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const dataBuffer = evt.target.result;
+        const wb = XLSX.read(dataBuffer, { type: 'array' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws);
+
+        console.log("Parsed Excel Data:", data);
+
+        const getVal = (row, ...keys) => {
+          for (const k of keys) {
+            const matchKey = Object.keys(row).find(rk => String(rk).trim().toLowerCase() === k.toLowerCase());
+            if (matchKey !== undefined && row[matchKey] !== undefined) return String(row[matchKey]).trim();
+          }
+          return null;
+        };
+
+        const newFaculties = data.map((row, index) => {
+          return {
+            id: Date.now() + index,
+            fullName: getVal(row, "staff name", "name", "teacher name", "faculty name"),
+            empId: getVal(row, "emp id", "employee id", "empid", "id") || "",
+            designation: getVal(row, "designation", "post", "title") || "Assistant Professor",
+            targetLoad: parseInt(getVal(row, "target load", "total", "load") || 0, 10),
+            fyLoad: parseInt(getVal(row, "fy load", "fy") || 0, 10),
+            ugLoad: parseInt(getVal(row, "ug load", "ug total", "ug") || 0, 10),
+            pgLoad: parseInt(getVal(row, "pg load", "pg total", "pg") || 0, 10),
+            centralAuthority: "None"
+          };
+        }).filter(f => f.fullName);
+
+        if (newFaculties.length === 0) {
+          alert("No valid faculty data found. Please ensure the Excel sheet has a 'Staff Name' column.");
+          return;
+        }
+
+        const currentFaculties = [...(inputsData.faculties || ritDepartmentPreset.faculties)];
+
+        newFaculties.forEach(nf => {
+          const existingIdx = currentFaculties.findIndex(cf => (cf.fullName || "").toLowerCase() === nf.fullName.toLowerCase() || (cf.name && cf.name === nf.name));
+          if (existingIdx >= 0) {
+            currentFaculties[existingIdx] = { ...currentFaculties[existingIdx], ...nf, name: currentFaculties[existingIdx].name };
+          } else {
+            const words = nf.fullName.replace(/Dr\.|Mr\.|Mrs\.|Prof\./gi, "").trim().split(/[\s.]+/);
+            const shortcode = words.map(w => w?.[0] || '').join('').substring(0, 3).toUpperCase();
+            nf.name = shortcode || `F${Date.now()}`;
+            currentFaculties.push(nf);
+          }
+        });
+
+        const newInputs = { ...inputsData, faculties: currentFaculties };
+        setInputsData(newInputs);
+        localStorage.setItem("customMasterPayload", JSON.stringify(newInputs));
+        alert("Faculty data imported successfully! " + newFaculties.length + " records processed.");
+      } catch (err) {
+        console.error(err);
+        alert("Error parsing Excel file.");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = null;
+  };
+
+  const roomFileInputRef = useRef(null);
+
+  const handleRoomFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const dataBuffer = evt.target.result;
+        const wb = XLSX.read(dataBuffer, { type: 'array' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws);
+
+        const getVal = (row, ...keys) => {
+          for (const k of keys) {
+            const matchKey = Object.keys(row).find(rk => String(rk).trim().toLowerCase() === k.toLowerCase());
+            if (matchKey !== undefined && row[matchKey] !== undefined) return String(row[matchKey]).trim();
+          }
+          return null;
+        };
+
+        const newRooms = data.map(row => {
+          return {
+            name: getVal(row, "room name", "name", "room", "lab name") || "",
+            capacity: parseInt(getVal(row, "capacity", "seats", "size") || 75, 10),
+            type: (getVal(row, "type", "room type") || "CLASSROOM").toUpperCase().includes("LAB") ? "LAB" : "CLASSROOM",
+            floor: getVal(row, "floor", "location") || ""
+          };
+        }).filter(r => r.name);
+
+        const currentRooms = [...(inputsData.rooms || ritDepartmentPreset.rooms)];
+
+        newRooms.forEach(nr => {
+          const existingIdx = currentRooms.findIndex(cr => cr.name.toLowerCase() === nr.name.toLowerCase());
+          if (existingIdx >= 0) {
+            currentRooms[existingIdx] = { ...currentRooms[existingIdx], ...nr };
+          } else {
+            currentRooms.push(nr);
+          }
+        });
+
+        const newInputs = { ...inputsData, rooms: currentRooms };
+        setInputsData(newInputs);
+        localStorage.setItem("customMasterPayload", JSON.stringify(newInputs));
+        alert("Room data imported successfully! " + newRooms.length + " records processed.");
+      } catch (err) {
+        console.error(err);
+        alert("Error parsing Excel file.");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = null;
+  };
 
   const periodTimings = [
     "10:00 To 11:00",
@@ -91,7 +330,10 @@ function DashboardHome() {
     "04:00 To 05:00"
   ];
 
-  const facultiesList = inputsData.faculties || ritDepartmentPreset.faculties || [];
+  const facultiesList = (inputsData.faculties || ritDepartmentPreset.faculties || []).map(f => {
+    const presetF = ritDepartmentPreset.faculties.find(pf => pf.name === f.name);
+    return presetF ? { ...presetF, ...f, targetLoad: presetF.targetLoad, fyLoad: presetF.fyLoad, ugLoad: presetF.ugLoad, pgLoad: presetF.pgLoad } : f;
+  });
   const roomsList = inputsData.rooms || ritDepartmentPreset.rooms || [];
   const classroomsList = roomsList.filter((r) => r.type === "CLASSROOM" || !r.type || r.type === "THEORY");
   const labsList = roomsList.filter((r) => r.type === "LAB");
@@ -308,62 +550,6 @@ function DashboardHome() {
         </div>
       </div>
 
-      {/* Admin Personal Welcome Bar */}
-      <div style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        background: "#ffffff",
-        border: "1px solid #e2e8f0",
-        borderRadius: "10px",
-        padding: "10px 18px",
-        marginBottom: "20px",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-        flexWrap: "wrap",
-        gap: "10px"
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <span style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "32px",
-            height: "32px",
-            borderRadius: "50%",
-            background: "linear-gradient(135deg, #facc15, #eab308)",
-            color: "#0f172a",
-            fontWeight: 800,
-            fontSize: "12.5px",
-            boxShadow: "0 1px 4px rgba(250, 204, 21, 0.4)"
-          }}>
-            {user?.avatar || "RP"}
-          </span>
-          <div>
-            <span style={{ fontSize: "13px", color: "#64748b" }}>Personal Admin Session: </span>
-            <strong style={{ fontSize: "13.5px", color: "#0f172a" }}>{user?.name || "Prof. Reva Patil"}</strong>
-            <span style={{
-              marginLeft: "8px",
-              padding: "2px 8px",
-              background: "#fef9c3",
-              color: "#854d0e",
-              border: "1px solid #fde047",
-              borderRadius: "12px",
-              fontSize: "11px",
-              fontWeight: 700
-            }}>
-              {user?.role || "Administrator"}
-            </span>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-          <div style={{ fontSize: "12px", color: "#64748b", display: "flex", alignItems: "center", gap: "6px" }}>
-            <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: "#22c55e" }} />
-            <span>Active Session</span>
-          </div>
-        </div>
-      </div>
-
       {/* 4 Interactive Information Cards (Faculty, Classroom, Laboratory, Workload) */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "16px", marginBottom: "22px" }}>
         {/* Card 1: Faculty Information */}
@@ -388,12 +574,6 @@ function DashboardHome() {
           <h3 style={{ margin: "6px 0 2px", fontSize: "24px", color: "#1e3a8a", fontWeight: 800 }}>
             {facultiesList.length} Teachers
           </h3>
-          <p style={{ margin: 0, fontSize: "12.5px", color: "#475569", lineHeight: "1.4" }}>
-            With daily lecture caps & FY load tracking
-          </p>
-          <div style={{ marginTop: "10px", fontSize: "11.5px", fontWeight: 700, color: "#2563eb", display: "flex", alignItems: "center", gap: "4px" }}>
-            <span>{activeDetailSection === "FACULTY" ? "▼ Viewing Events Organized" : "Inspect Events Organized →"}</span>
-          </div>
         </div>
 
         {/* Card 2: Classroom Information */}
@@ -418,12 +598,6 @@ function DashboardHome() {
           <h3 style={{ margin: "6px 0 2px", fontSize: "24px", color: "#1e3a8a", fontWeight: 800 }}>
             {classroomsList.length} Lecture Halls
           </h3>
-          <p style={{ margin: 0, fontSize: "12.5px", color: "#475569", lineHeight: "1.4" }}>
-            SY (CR-26), TY (CR-27) & B.Tech (CR-212)
-          </p>
-          <div style={{ marginTop: "10px", fontSize: "11.5px", fontWeight: 700, color: "#2563eb", display: "flex", alignItems: "center", gap: "4px" }}>
-            <span>{activeDetailSection === "CLASSROOM" ? "▼ Viewing Events Organized" : "Inspect Events Organized →"}</span>
-          </div>
         </div>
 
         {/* Card 3: Laboratory Information */}
@@ -448,47 +622,9 @@ function DashboardHome() {
           <h3 style={{ margin: "6px 0 2px", fontSize: "24px", color: "#1e3a8a", fontWeight: 800 }}>
             {labsList.length} Practical Labs
           </h3>
-          <p style={{ margin: 0, fontSize: "12.5px", color: "#475569", lineHeight: "1.4" }}>
-            IL1 to IL{labsList.length} with 4-batch Latin square rotation
-          </p>
-          <div style={{ marginTop: "10px", fontSize: "11.5px", fontWeight: 700, color: "#2563eb", display: "flex", alignItems: "center", gap: "4px" }}>
-            <span>{activeDetailSection === "LAB" ? "▼ Viewing Events Organized" : "Inspect Events Organized →"}</span>
-          </div>
         </div>
 
-        {/* Card 4: Total Contact Hours */}
-        <Link
-          to="/master-timetable?view=ALL"
-          style={{
-            background: metrics.conflictCount > 0 ? "#fff1f2" : "#ffffff",
-            padding: "18px 20px",
-            borderRadius: "10px",
-            border: `1px solid ${metrics.conflictCount > 0 ? "#f87171" : "#cbd5e1"}`,
-            boxShadow: metrics.conflictCount > 0 ? "0 2px 8px rgba(239, 68, 68, 0.15)" : "0 1px 3px rgba(0,0,0,0.05)",
-            textDecoration: "none",
-            color: "inherit",
-            display: "block",
-            transition: "all 0.15s ease",
-            cursor: "pointer"
-          }}
-          title="Open Master Timetable"
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <span style={{ fontSize: "11.5px", color: "#64748b", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-              Total Contact Hours
-            </span>
-            <span style={{ fontSize: "18px" }}>📊</span>
-          </div>
-          <h3 style={{ margin: "6px 0 2px", fontSize: "24px", color: metrics.conflictCount > 0 ? "#dc2626" : "#15803d", fontWeight: 800 }}>
-            {metrics.totalContactHours} Periods
-          </h3>
-          <span style={{ fontSize: "12.5px", color: metrics.conflictCount > 0 ? "#dc2626" : "#166534", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "4px" }}>
-            {metrics.conflictCount === 0 ? "✓ 100% Conflict-Free Scheduling" : `⚠️ ${metrics.conflictCount} Clash(es) Detected`}
-          </span>
-          <div style={{ marginTop: "10px", fontSize: "11.5px", fontWeight: 700, color: "#2563eb" }}>
-            Open Master Timetable →
-          </div>
-        </Link>
+
       </div>
 
       {/* Real-time Conflict Alert Banner on Dashboard */}
@@ -549,268 +685,231 @@ function DashboardHome() {
         marginBottom: "28px",
         boxShadow: "0 2px 8px rgba(0, 0, 0, 0.04)"
       }}>
-        {/* Navigation Tabs Header */}
-        <div style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          borderBottom: "2px solid #e2e8f0",
-          paddingBottom: "14px",
-          marginBottom: "18px",
-          flexWrap: "wrap",
-          gap: "12px"
-        }}>
-          <div>
-            <h3 style={{ margin: 0, fontSize: "17.5px", fontWeight: 800, color: "#1e3a8a", display: "flex", alignItems: "center", gap: "8px" }}>
-              <span>📅 Actual Details & Events Organized</span>
-            </h3>
-            <p style={{ margin: "3px 0 0", fontSize: "12.5px", color: "#64748b" }}>
-              Live scheduled lectures, teacher teaching hours, classroom occupancies, and laboratory practical rotations
-            </p>
-          </div>
 
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            <button
-              type="button"
-              onClick={() => setActiveDetailSection("FACULTY")}
-              style={{
-                padding: "8px 14px",
-                borderRadius: "6px",
-                border: activeDetailSection === "FACULTY" ? "none" : "1px solid #cbd5e1",
-                background: activeDetailSection === "FACULTY" ? "#1e40af" : "#ffffff",
-                color: activeDetailSection === "FACULTY" ? "#ffffff" : "#334155",
-                fontWeight: 700,
-                fontSize: "12.5px",
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px"
-              }}
-            >
-              👨‍🏫 Faculty Information ({facultiesList.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveDetailSection("CLASSROOM")}
-              style={{
-                padding: "8px 14px",
-                borderRadius: "6px",
-                border: activeDetailSection === "CLASSROOM" ? "none" : "1px solid #cbd5e1",
-                background: activeDetailSection === "CLASSROOM" ? "#1e40af" : "#ffffff",
-                color: activeDetailSection === "CLASSROOM" ? "#ffffff" : "#334155",
-                fontWeight: 700,
-                fontSize: "12.5px",
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px"
-              }}
-            >
-              🏛️ Classroom Information ({classroomsList.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveDetailSection("LAB")}
-              style={{
-                padding: "8px 14px",
-                borderRadius: "6px",
-                border: activeDetailSection === "LAB" ? "none" : "1px solid #cbd5e1",
-                background: activeDetailSection === "LAB" ? "#1e40af" : "#ffffff",
-                color: activeDetailSection === "LAB" ? "#ffffff" : "#334155",
-                fontWeight: 700,
-                fontSize: "12.5px",
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px"
-              }}
-            >
-              🔬 Laboratory Information ({labsList.length})
-            </button>
-          </div>
-        </div>
 
         {/* TAB 1: FACULTY INFORMATION & EVENTS ORGANIZED */}
         {activeDetailSection === "FACULTY" && (
           <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                <span style={{ fontSize: "12.5px", fontWeight: 700, color: "#334155" }}>Filter Faculty:</span>
-                <select
-                  value={selectedFacultyFilter}
-                  onChange={(e) => setSelectedFacultyFilter(e.target.value)}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: "6px",
-                    border: "1px solid #cbd5e1",
-                    fontSize: "13px",
-                    fontWeight: 600,
-                    background: "white",
-                    color: "#0f172a"
-                  }}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", marginBottom: "14px", gap: "10px" }}>
+              <div></div>
+              <span style={{ fontSize: "16px", color: "#475569", fontWeight: 700, textAlign: "center" }}>Faculty Details</span>
+              <div className="no-print" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <input
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  ref={fileInputRef}
+                  style={{ display: "none" }}
+                  onChange={handleFileUpload}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ background: "#2563eb", color: "white", padding: "6px 14px", borderRadius: "6px", border: "none", fontSize: "12.5px", fontWeight: "bold", cursor: "pointer", marginLeft: "8px", display: "flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 3px rgba(37,99,235,0.2)" }}
                 >
-                  <option value="ALL">All Faculty Members ({facultiesList.length})</option>
-                  {facultiesList.map((f) => (
-                    <option key={f.name} value={f.name}>
-                      {f.name} - {f.fullName || f.name} ({f.designation || "Assistant Professor"})
-                    </option>
-                  ))}
-                </select>
+                  <span style={{ fontSize: "14px" }}>📥</span> Import Excel
+                </button>
+                <button
+                  onClick={handleAddNewFaculty}
+                  style={{ background: "#16a34a", color: "white", padding: "6px 14px", borderRadius: "6px", border: "none", fontSize: "12.5px", fontWeight: "bold", cursor: "pointer", marginLeft: "4px", display: "flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 3px rgba(22,163,74,0.2)" }}
+                >
+                  <span style={{ fontSize: "14px" }}>➕</span> Add Faculty
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  style={{ background: "#475569", color: "white", padding: "6px 14px", borderRadius: "6px", border: "none", fontSize: "12.5px", fontWeight: "bold", cursor: "pointer", marginLeft: "4px", display: "flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 3px rgba(71,85,105,0.2)" }}
+                >
+                  <span style={{ fontSize: "14px" }}>🖨️</span> Print Sheet
+                </button>
               </div>
-
-              <Link
-                to="/master-timetable?view=FACULTY"
-                style={{
-                  fontSize: "12.5px",
-                  fontWeight: 700,
-                  color: "#1e40af",
-                  textDecoration: "none",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "4px"
-                }}
-              >
-                Open Full Personal Faculty Schedules Matrix →
-              </Link>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-              {facultiesList
-                .filter((f) => selectedFacultyFilter === "ALL" || f.name === selectedFacultyFilter)
-                .map((f) => {
-                  const events = getFacultyEvents(f);
-                  const theoryHours = events.filter((e) => e.type === "THEORY LECTURE").length;
-                  const practicalHours = events.filter((e) => e.type === "PRACTICAL LAB").length * 2;
-                  const fyHours = events.filter((e) => e.type === "FY FIXED LOAD").length * 2;
-                  const totalHours = theoryHours + practicalHours + fyHours;
+            <div style={{ overflowX: "auto", marginTop: "10px" }}>
+              <datalist id="role-suggestions">
+                <option value="H.O.D." />
+                <option value="Class Teacher" />
+                <option value="TPO" />
+                <option value="TPC" />
+                <option value="Coordinator" />
+              </datalist>
+              <table style={{ width: "100%", borderCollapse: "collapse", background: "white", borderRadius: "8px", overflow: "hidden", border: "1px solid #cbd5e1" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc", color: "#1e293b", textAlign: "left", borderBottom: "2px solid #cbd5e1" }}>
+                    <th style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px" }}>Staff Name</th>
+                    <th style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px" }}>Initials</th>
+                    <th style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px" }}>EMP ID</th>
+                    <th style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px" }}>Designation</th>
+                    <th style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px" }}>Role</th>
+                    <th className="no-print" style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px", width: "120px", textAlign: "center" }}>Actions</th>
+                  </tr>
+                </thead>
+                {editingFacultyId === "NEW" && (
+                  <tbody>
+                    <tr style={{ background: "#fef3c7" }}>
+                      <td style={{ padding: "14px 20px" }}>
+                        <input
+                          value={editForm.fullName}
+                          onChange={(e) => setEditForm({ ...editForm, fullName: e.target.value })}
+                          placeholder="e.g. Prof. J. Doe"
+                          style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #d97706", fontSize: "13.5px", outline: "none", background: "white" }}
+                        />
+                      </td>
+                      <td style={{ padding: "14px 20px" }}>
+                        <input
+                          value={editForm.initials}
+                          onChange={(e) => setEditForm({ ...editForm, initials: e.target.value })}
+                          placeholder="e.g. JD"
+                          style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #d97706", fontSize: "13.5px", outline: "none", background: "white" }}
+                        />
+                      </td>
+                      <td style={{ padding: "14px 20px" }}>
+                        <input
+                          value={editForm.empId}
+                          onChange={(e) => setEditForm({ ...editForm, empId: e.target.value })}
+                          placeholder="e.g. EMP123"
+                          style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #d97706", fontSize: "13.5px", outline: "none", background: "white" }}
+                        />
+                      </td>
+                      <td style={{ padding: "14px 20px" }}>
+                        <input
+                          value={editForm.designation}
+                          onChange={(e) => setEditForm({ ...editForm, designation: e.target.value })}
+                          placeholder="e.g. Assistant Professor"
+                          style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #d97706", fontSize: "13px", outline: "none", background: "white" }}
+                        />
+                      </td>
+                      <td style={{ padding: "14px 20px" }}>
+                        <input
+                          list="role-suggestions"
+                          value={editForm.role}
+                          onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+                          placeholder="e.g. Class Teacher"
+                          style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #d97706", fontSize: "13px", outline: "none", background: "white" }}
+                        />
+                      </td>
+                      <td className="no-print" style={{ padding: "14px 20px", textAlign: "center" }}>
+                        <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
+                          <button onClick={() => handleSaveFaculty("NEW")} style={{ background: "#d97706", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Add</button>
+                          <button onClick={() => setEditingFacultyId(null)} style={{ background: "#9ca3af", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Cancel</button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                )}
+                {(() => {
+                  const getLevel = (desig) => {
+                    const d = (desig || "").toUpperCase();
+                    if (d.includes("H.O.D") || d.includes("HOD")) return { rank: 1, label: "Head of Department (H.O.D)" };
+                    if (d === "PROFESSOR" || (d.includes("PROFESSOR") && !d.includes("ASSISTANT") && !d.includes("ASSOCIATE"))) return { rank: 2, label: "Professors" };
+                    if (d.includes("ASSOCIATE PROF")) return { rank: 3, label: "Associate Professors" };
+                    if (d.includes("ASSISTANT PROF")) return { rank: 4, label: "Assistant Professors" };
+                    if (d.includes("TA") || d.includes("TEACHING ASSISTANT")) return { rank: 5, label: "Teaching Assistants" };
+                    return { rank: 6, label: "Other Faculty" };
+                  };
 
-                  return (
-                    <div
-                      key={f.name}
-                      style={{
-                        border: "1px solid #e2e8f0",
-                        borderRadius: "10px",
-                        background: "#f8fafc",
-                        padding: "16px 20px"
-                      }}
-                    >
-                      {/* Teacher Header Bar */}
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "10px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                          <span style={{
-                            width: "36px",
-                            height: "36px",
-                            borderRadius: "8px",
-                            background: "#dbeafe",
-                            color: "#1e40af",
-                            fontWeight: 800,
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: "13px"
-                          }}>
-                            {f.name}
-                          </span>
-                          <div>
-                            <div style={{ fontSize: "14.5px", fontWeight: 800, color: "#0f172a" }}>
-                              {f.fullName || f.name}
-                            </div>
-                            <div style={{ fontSize: "12px", color: "#64748b" }}>
-                              {f.designation || "Assistant Professor"} {f.centralAuthority && f.centralAuthority !== "None" ? `• ${f.centralAuthority}` : ""}
-                            </div>
-                          </div>
-                        </div>
+                  const filtered = facultiesList.filter((f) => selectedFacultyFilter === "ALL" || f.name === selectedFacultyFilter);
+                  const groups = {};
+                  filtered.forEach(f => {
+                    const lvl = getLevel(f.designation);
+                    if (!groups[lvl.label]) groups[lvl.label] = { rank: lvl.rank, items: [] };
+                    groups[lvl.label].items.push(f);
+                  });
 
-                        <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
-                          <span style={{
-                            padding: "4px 10px",
-                            borderRadius: "6px",
-                            background: "#dcfce7",
-                            color: "#166534",
-                            fontWeight: 700,
-                            fontSize: "12px",
-                            border: "1px solid #86efac"
-                          }}>
-                            Total Load: <strong>{totalHours} hrs/wk</strong>
-                          </span>
-                          <span style={{ fontSize: "11.5px", color: "#475569" }}>
-                            Theory: <strong>{theoryHours} hrs</strong> | Labs: <strong>{practicalHours} hrs</strong> | FY: <strong>{fyHours} hrs</strong>
-                          </span>
-                          <Link
-                            to={`/master-timetable?view=FACULTY&faculty=${f.name}`}
-                            style={{
-                              padding: "4px 10px",
-                              borderRadius: "4px",
-                              background: "#ffffff",
-                              color: "#2563eb",
-                              border: "1px solid #93c5fd",
-                              fontSize: "11.5px",
-                              fontWeight: 700,
-                              textDecoration: "none"
-                            }}
-                          >
-                            View Timetable →
-                          </Link>
-                        </div>
-                      </div>
-
-                      {/* Actual Events Organized Table */}
-                      {events.length === 0 ? (
-                        <div style={{ padding: "14px", background: "#ffffff", borderRadius: "6px", border: "1px dashed #cbd5e1", fontSize: "12.5px", color: "#64748b", textAlign: "center" }}>
-                          {masterDataState ? "No active events scheduled for this faculty member." : "Generate the timetable to view live organized period slots."}
-                        </div>
-                      ) : (
-                        <div style={{ overflowX: "auto" }}>
-                          <table style={{ width: "100%", borderCollapse: "collapse", background: "white", borderRadius: "6px", overflow: "hidden", fontSize: "12px" }}>
-                            <thead>
-                              <tr style={{ background: "#e2e8f0", color: "#334155", textAlign: "left" }}>
-                                <th style={{ padding: "7px 10px" }}>Day</th>
-                                <th style={{ padding: "7px 10px" }}>Period & Timing</th>
-                                <th style={{ padding: "7px 10px" }}>Course / Subject Title</th>
-                                <th style={{ padding: "7px 10px" }}>Class / Year</th>
-                                <th style={{ padding: "7px 10px" }}>Event Type</th>
-                                <th style={{ padding: "7px 10px" }}>Room / Lab Location</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {events.map((ev, idx) => (
-                                <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                                  <td style={{ padding: "7px 10px", fontWeight: 700, color: "#1e3a8a" }}>
-                                    {ev.day}
-                                  </td>
-                                  <td style={{ padding: "7px 10px", color: "#475569", whiteSpace: "nowrap" }}>
-                                    <strong>P{ev.period}</strong> ({ev.timing})
-                                  </td>
-                                  <td style={{ padding: "7px 10px", fontWeight: 600, color: "#0f172a" }}>
-                                    {ev.course}
-                                  </td>
-                                  <td style={{ padding: "7px 10px", color: "#334155" }}>
-                                    {ev.classYear}
-                                  </td>
-                                  <td style={{ padding: "7px 10px" }}>
-                                    <span style={{
-                                      padding: "2px 6px",
-                                      borderRadius: "4px",
-                                      fontSize: "10.5px",
-                                      fontWeight: 700,
-                                      background: ev.type === "THEORY LECTURE" ? "#e0f2fe" : (ev.type === "PRACTICAL LAB" ? "#fef3c7" : "#f1f5f9"),
-                                      color: ev.type === "THEORY LECTURE" ? "#0369a1" : (ev.type === "PRACTICAL LAB" ? "#92400e" : "#334155")
-                                    }}>
-                                      {ev.type} {ev.batch !== "Whole Class" ? `(${ev.batch})` : ""}
-                                    </span>
-                                  </td>
-                                  <td style={{ padding: "7px 10px", fontWeight: 700, color: "#15803d" }}>
-                                    📍 {ev.location}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                  return Object.entries(groups)
+                    .sort((a, b) => a[1].rank - b[1].rank)
+                    .map(([groupLabel, groupData]) => (
+                      <tbody key={groupLabel}>
+                        <tr style={{ background: "#e2e8f0" }}>
+                          <td colSpan="6" style={{ padding: "8px 20px", fontWeight: 800, color: "#1e3a8a", fontSize: "12.5px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                            {groupLabel}
+                          </td>
+                        </tr>
+                        {groupData.items.map((f, idx) => (
+                          <tr key={f.name} style={{ borderBottom: "1px solid #f1f5f9", background: idx % 2 === 0 ? "#ffffff" : "#f8fafc" }}>
+                            <td style={{ padding: "14px 20px", fontWeight: 700, color: "#0f172a", fontSize: "13.5px" }}>
+                              {editingFacultyId === f.name ? (
+                                <input
+                                  value={editForm.fullName}
+                                  onChange={(e) => setEditForm({ ...editForm, fullName: e.target.value })}
+                                  style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #94a3b8", fontSize: "13.5px", outline: "none" }}
+                                />
+                              ) : (
+                                f.fullName || f.name
+                              )}
+                            </td>
+                            <td style={{ padding: "14px 20px", color: "#334155", fontWeight: 700, fontSize: "13px" }}>
+                              {editingFacultyId === f.name ? (
+                                <input
+                                  value={editForm.initials}
+                                  onChange={(e) => setEditForm({ ...editForm, initials: e.target.value })}
+                                  style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #94a3b8", fontSize: "13px", outline: "none" }}
+                                />
+                              ) : (
+                                f.name || "—"
+                              )}
+                            </td>
+                            <td style={{ padding: "14px 20px", color: "#334155", fontWeight: 500, fontSize: "13px" }}>
+                              {editingFacultyId === f.name ? (
+                                <input
+                                  value={editForm.empId}
+                                  onChange={(e) => setEditForm({ ...editForm, empId: e.target.value })}
+                                  style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #94a3b8", fontSize: "13px", outline: "none" }}
+                                />
+                              ) : (
+                                f.empId || "—"
+                              )}
+                            </td>
+                            <td style={{ padding: "14px 20px", color: "#334155", fontWeight: 500, fontSize: "13px" }}>
+                              {editingFacultyId === f.name ? (
+                                <input
+                                  value={editForm.designation}
+                                  onChange={(e) => setEditForm({ ...editForm, designation: e.target.value })}
+                                  style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #94a3b8", fontSize: "13px", outline: "none" }}
+                                />
+                              ) : (
+                                f.designation || "Assistant Professor"
+                              )}
+                            </td>
+                            <td style={{ padding: "14px 20px", color: "#334155", fontWeight: 500, fontSize: "13px" }}>
+                              {editingFacultyId === f.name ? (
+                                <input
+                                  list="role-suggestions"
+                                  value={editForm.role}
+                                  onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+                                  placeholder="e.g. Class Teacher"
+                                  style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #94a3b8", fontSize: "13px", outline: "none" }}
+                                />
+                              ) : (
+                                f.role || "—"
+                              )}
+                            </td>
+                            <td className="no-print" style={{ padding: "14px 20px", textAlign: "center" }}>
+                              {editingFacultyId === f.name ? (
+                                <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
+                                  <button onClick={() => handleSaveFaculty(f.name)} style={{ background: "#22c55e", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Save</button>
+                                  <button onClick={() => setEditingFacultyId(null)} style={{ background: "#64748b", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Cancel</button>
+                                </div>
+                              ) : (
+                                <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
+                                  <button
+                                    onClick={() => { setEditingFacultyId(f.name); setEditForm({ fullName: f.fullName || f.name, initials: f.name, designation: f.designation || "Assistant Professor", empId: f.empId || "", role: f.role || "" }); }}
+                                    style={{ background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "4px", padding: "6px 16px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteFaculty(f.name)}
+                                    style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "4px", padding: "6px 16px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    ));
+                })()}
+              </table>
             </div>
           </div>
         )}
@@ -819,138 +918,75 @@ function DashboardHome() {
         {activeDetailSection === "CLASSROOM" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
-              <div style={{ fontSize: "13px", color: "#475569" }}>
-                Theory Lecture Classrooms allocated to <strong>S.Y., T.Y., and Final Year (B.Tech)</strong>
+              <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Manage Theory Classrooms</span>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <input type="file" accept=".xlsx, .xls, .csv" ref={roomFileInputRef} style={{ display: "none" }} onChange={handleRoomFileUpload} />
+                <button onClick={() => roomFileInputRef.current?.click()} style={{ background: "#2563eb", color: "white", padding: "6px 14px", borderRadius: "6px", border: "none", fontSize: "12.5px", fontWeight: "bold", cursor: "pointer", marginLeft: "8px", display: "flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 3px rgba(37,99,235,0.2)" }}>
+                  <span style={{ fontSize: "14px" }}>📥</span> Import Excel
+                </button>
+                <button onClick={() => handleAddNewRoom("CLASSROOM")} style={{ background: "#16a34a", color: "white", padding: "6px 14px", borderRadius: "6px", border: "none", fontSize: "12.5px", fontWeight: "bold", cursor: "pointer", marginLeft: "4px", display: "flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 3px rgba(22,163,74,0.2)" }}>
+                  <span style={{ fontSize: "14px" }}>➕</span> Add Classroom
+                </button>
               </div>
-              <Link
-                to="/master-timetable?view=ROOM_MASTER"
-                style={{
-                  fontSize: "12.5px",
-                  fontWeight: 700,
-                  color: "#1e40af",
-                  textDecoration: "none",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "4px"
-                }}
-              >
-                Open Master Classroom Timetable Matrix →
-              </Link>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-              {classroomsList.map((room) => {
-                const events = getClassroomEvents(room);
-                let assignedClass = "General Theory";
-                if (room.name.includes("26") || room.name.includes("105") || room.name.includes("SY")) assignedClass = "Second Year (S.Y. B.Tech) - Sem-III";
-                else if (room.name.includes("27") || room.name.includes("106") || room.name.includes("TY")) assignedClass = "Third Year (T.Y. B.Tech) - Sem-V";
-                else if (room.name.includes("212") || room.name.includes("107") || room.name.includes("BTECH")) assignedClass = "Final Year (B.Tech) - Sem-VII";
-
-                return (
-                  <div
-                    key={room.name}
-                    style={{
-                      border: "1px solid #e2e8f0",
-                      borderRadius: "10px",
-                      background: "#f8fafc",
-                      padding: "16px 20px"
-                    }}
-                  >
-                    {/* Classroom Header */}
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "10px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <span style={{
-                          padding: "6px 12px",
-                          borderRadius: "8px",
-                          background: "#e0f2fe",
-                          color: "#0369a1",
-                          fontWeight: 800,
-                          fontSize: "14px"
-                        }}>
-                          🏛️ {room.name}
-                        </span>
-                        <div>
-                          <strong style={{ fontSize: "14.5px", color: "#0f172a" }}>{assignedClass}</strong>
-                          <div style={{ fontSize: "12px", color: "#64748b" }}>
-                            Seating Capacity: <strong>{room.capacity || 75} Students</strong> • Type: <strong>Lecture Hall</strong> • Floor: <strong>Second Floor</strong>
-                          </div>
+            <div style={{ overflowX: "auto", marginTop: "10px" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", background: "white", borderRadius: "8px", overflow: "hidden", border: "1px solid #cbd5e1" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc", color: "#1e293b", textAlign: "left", borderBottom: "2px solid #cbd5e1" }}>
+                    <th style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px" }}>Classroom Name</th>
+                    <th style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px" }}>Seating Capacity</th>
+                    <th style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px", width: "120px", textAlign: "center" }}>Actions</th>
+                  </tr>
+                </thead>
+                {editingRoomId === "NEW_CLASSROOM" && (
+                  <tbody>
+                    <tr style={{ background: "#fef3c7" }}>
+                      <td style={{ padding: "14px 20px" }}>
+                        <input value={editRoomForm.name} onChange={(e) => setEditRoomForm({ ...editRoomForm, name: e.target.value })} placeholder="e.g. CR-26" style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #d97706", fontSize: "13.5px", outline: "none", background: "white" }} />
+                      </td>
+                      <td style={{ padding: "14px 20px" }}>
+                        <input type="number" value={editRoomForm.capacity} onChange={(e) => setEditRoomForm({ ...editRoomForm, capacity: e.target.value })} placeholder="e.g. 75" style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #d97706", fontSize: "13px", outline: "none", background: "white" }} />
+                      </td>
+                      <td style={{ padding: "14px 20px", textAlign: "center" }}>
+                        <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
+                          <button onClick={() => handleSaveRoom("NEW_CLASSROOM")} style={{ background: "#d97706", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Add</button>
+                          <button onClick={() => setEditingRoomId(null)} style={{ background: "#9ca3af", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Cancel</button>
                         </div>
-                      </div>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <span style={{
-                          padding: "4px 10px",
-                          borderRadius: "6px",
-                          background: "#dcfce7",
-                          color: "#166534",
-                          fontWeight: 700,
-                          fontSize: "12px",
-                          border: "1px solid #86efac"
-                        }}>
-                          Scheduled Lectures: <strong>{events.length} Periods/Wk</strong>
-                        </span>
-                        <Link
-                          to="/master-timetable?view=ROOM_MASTER"
-                          style={{
-                            padding: "4px 10px",
-                            borderRadius: "4px",
-                            background: "#ffffff",
-                            color: "#2563eb",
-                            border: "1px solid #93c5fd",
-                            fontSize: "11.5px",
-                            fontWeight: 700,
-                            textDecoration: "none"
-                          }}
-                        >
-                          View Schedule →
-                        </Link>
-                      </div>
-                    </div>
-
-                    {/* Actual Events Organized */}
-                    {events.length === 0 ? (
-                      <div style={{ padding: "14px", background: "#ffffff", borderRadius: "6px", border: "1px dashed #cbd5e1", fontSize: "12.5px", color: "#64748b", textAlign: "center" }}>
-                        {masterDataState ? "No lecture events organized in this classroom." : "Generate the timetable to view live classroom occupancy."}
-                      </div>
-                    ) : (
-                      <div style={{ overflowX: "auto" }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", background: "white", borderRadius: "6px", overflow: "hidden", fontSize: "12px" }}>
-                          <thead>
-                            <tr style={{ background: "#e2e8f0", color: "#334155", textAlign: "left" }}>
-                              <th style={{ padding: "7px 10px" }}>Day</th>
-                              <th style={{ padding: "7px 10px" }}>Period & Timing</th>
-                              <th style={{ padding: "7px 10px" }}>Course Title</th>
-                              <th style={{ padding: "7px 10px" }}>Faculty In-Charge</th>
-                              <th style={{ padding: "7px 10px" }}>Attendee Class</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {events.map((ev, idx) => (
-                              <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                                <td style={{ padding: "7px 10px", fontWeight: 700, color: "#1e3a8a" }}>
-                                  {ev.day}
-                                </td>
-                                <td style={{ padding: "7px 10px", color: "#475569", whiteSpace: "nowrap" }}>
-                                  <strong>P{ev.period}</strong> ({ev.timing})
-                                </td>
-                                <td style={{ padding: "7px 10px", fontWeight: 700, color: "#0f172a" }}>
-                                  {ev.course}
-                                </td>
-                                <td style={{ padding: "7px 10px", fontWeight: 600, color: "#1e40af" }}>
-                                  👨‍🏫 {ev.faculty || "—"}
-                                </td>
-                                <td style={{ padding: "7px 10px", color: "#334155" }}>
-                                  {ev.classYear} IT
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                      </td>
+                    </tr>
+                  </tbody>
+                )}
+                <tbody>
+                  {classroomsList.map((room, idx) => (
+                    <tr key={room.name} style={{ borderBottom: "1px solid #f1f5f9", background: idx % 2 === 0 ? "#ffffff" : "#f8fafc" }}>
+                      <td style={{ padding: "14px 20px", fontWeight: 700, color: "#0f172a", fontSize: "13.5px" }}>
+                        {editingRoomId === room.name ? (
+                          <input value={editRoomForm.name} onChange={(e) => setEditRoomForm({ ...editRoomForm, name: e.target.value })} style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #94a3b8", fontSize: "13.5px", outline: "none" }} />
+                        ) : room.name}
+                      </td>
+                      <td style={{ padding: "14px 20px", color: "#334155", fontWeight: 500, fontSize: "13px" }}>
+                        {editingRoomId === room.name ? (
+                          <input type="number" value={editRoomForm.capacity} onChange={(e) => setEditRoomForm({ ...editRoomForm, capacity: e.target.value })} style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #94a3b8", fontSize: "13px", outline: "none" }} />
+                        ) : `${room.capacity || 75} Seats`}
+                      </td>
+                      <td style={{ padding: "14px 20px", textAlign: "center" }}>
+                        {editingRoomId === room.name ? (
+                          <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
+                            <button onClick={() => handleSaveRoom(room.name)} style={{ background: "#22c55e", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Save</button>
+                            <button onClick={() => setEditingRoomId(null)} style={{ background: "#64748b", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Cancel</button>
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
+                            <button onClick={() => { setEditingRoomId(room.name); setEditRoomForm({ name: room.name, capacity: room.capacity || 75, type: "CLASSROOM", floor: room.floor || "" }); }} style={{ background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "4px", padding: "6px 16px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Edit</button>
+                            <button onClick={() => handleDeleteRoom(room.name)} style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "4px", padding: "6px 16px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Delete</button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
@@ -959,325 +995,81 @@ function DashboardHome() {
         {activeDetailSection === "LAB" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
-              <div style={{ fontSize: "13px", color: "#475569" }}>
-                Computer Laboratories <strong>IL1 to IL6</strong> with 4-batch Latin Square practical rotation
+              <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Manage Computer Laboratories</span>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <input type="file" accept=".xlsx, .xls, .csv" ref={roomFileInputRef} style={{ display: "none" }} onChange={handleRoomFileUpload} />
+                <button onClick={() => roomFileInputRef.current?.click()} style={{ background: "#2563eb", color: "white", padding: "6px 14px", borderRadius: "6px", border: "none", fontSize: "12.5px", fontWeight: "bold", cursor: "pointer", marginLeft: "8px", display: "flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 3px rgba(37,99,235,0.2)" }}>
+                  <span style={{ fontSize: "14px" }}>📥</span> Import Excel
+                </button>
+                <button onClick={() => handleAddNewRoom("LAB")} style={{ background: "#16a34a", color: "white", padding: "6px 14px", borderRadius: "6px", border: "none", fontSize: "12.5px", fontWeight: "bold", cursor: "pointer", marginLeft: "4px", display: "flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 3px rgba(22,163,74,0.2)" }}>
+                  <span style={{ fontSize: "14px" }}>➕</span> Add Lab
+                </button>
               </div>
-              <Link
-                to="/master-timetable?view=LAB&lab=ALL"
-                style={{
-                  fontSize: "12.5px",
-                  fontWeight: 700,
-                  color: "#1e40af",
-                  textDecoration: "none",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "4px"
-                }}
-              >
-                Open Lab Master Timetable Matrix →
-              </Link>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-              {labsList.map((lab) => {
-                const sessions = getLabEvents(lab);
-
-                return (
-                  <div
-                    key={lab.name}
-                    style={{
-                      border: "1px solid #e2e8f0",
-                      borderRadius: "10px",
-                      background: "#f8fafc",
-                      padding: "16px 20px"
-                    }}
-                  >
-                    {/* Lab Header */}
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "10px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <span style={{
-                          padding: "6px 12px",
-                          borderRadius: "8px",
-                          background: "#fef3c7",
-                          color: "#92400e",
-                          fontWeight: 800,
-                          fontSize: "14px"
-                        }}>
-                          🔬 {lab.name}
-                        </span>
-                        <div>
-                          <strong style={{ fontSize: "14.5px", color: "#0f172a" }}>Information Technology Lab {lab.name}</strong>
-                          <div style={{ fontSize: "12px", color: "#64748b" }}>
-                            Capacity: <strong>{lab.capacity || 25} Systems</strong> • Setup: <strong>Core i7, Gigabit LAN, Linux/Windows Dual Boot</strong>
-                          </div>
+            <div style={{ overflowX: "auto", marginTop: "10px" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", background: "white", borderRadius: "8px", overflow: "hidden", border: "1px solid #cbd5e1" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc", color: "#1e293b", textAlign: "left", borderBottom: "2px solid #cbd5e1" }}>
+                    <th style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px" }}>Laboratory Name</th>
+                    <th style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px" }}>PC Count / Capacity</th>
+                    <th style={{ padding: "14px 20px", fontWeight: 800, fontSize: "14px", width: "120px", textAlign: "center" }}>Actions</th>
+                  </tr>
+                </thead>
+                {editingRoomId === "NEW_LAB" && (
+                  <tbody>
+                    <tr style={{ background: "#fef3c7" }}>
+                      <td style={{ padding: "14px 20px" }}>
+                        <input value={editRoomForm.name} onChange={(e) => setEditRoomForm({ ...editRoomForm, name: e.target.value })} placeholder="e.g. IL1" style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #d97706", fontSize: "13.5px", outline: "none", background: "white" }} />
+                      </td>
+                      <td style={{ padding: "14px 20px" }}>
+                        <input type="number" value={editRoomForm.capacity} onChange={(e) => setEditRoomForm({ ...editRoomForm, capacity: e.target.value })} placeholder="e.g. 24" style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #d97706", fontSize: "13px", outline: "none", background: "white" }} />
+                      </td>
+                      <td style={{ padding: "14px 20px", textAlign: "center" }}>
+                        <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
+                          <button onClick={() => handleSaveRoom("NEW_LAB")} style={{ background: "#d97706", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Add</button>
+                          <button onClick={() => setEditingRoomId(null)} style={{ background: "#9ca3af", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Cancel</button>
                         </div>
-                      </div>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <span style={{
-                          padding: "4px 10px",
-                          borderRadius: "6px",
-                          background: "#dcfce7",
-                          color: "#166534",
-                          fontWeight: 700,
-                          fontSize: "12px",
-                          border: "1px solid #86efac"
-                        }}>
-                          Scheduled Sessions: <strong>{sessions.length} Blocks ({sessions.length * 2} hrs/wk)</strong>
-                        </span>
-                        <Link
-                          to={`/master-timetable?view=LAB&lab=${lab.name}`}
-                          style={{
-                            padding: "4px 10px",
-                            borderRadius: "4px",
-                            background: "#ffffff",
-                            color: "#2563eb",
-                            border: "1px solid #93c5fd",
-                            fontSize: "11.5px",
-                            fontWeight: 700,
-                            textDecoration: "none"
-                          }}
-                        >
-                          View Lab Grid →
-                        </Link>
-                      </div>
-                    </div>
-
-                    {/* Actual Events Organized */}
-                    {sessions.length === 0 ? (
-                      <div style={{ padding: "14px", background: "#ffffff", borderRadius: "6px", border: "1px dashed #cbd5e1", fontSize: "12.5px", color: "#64748b", textAlign: "center" }}>
-                        {masterDataState ? "No active lab practical sessions assigned to this lab." : "Generate the timetable to view live computer laboratory sessions."}
-                      </div>
-                    ) : (
-                      <div style={{ overflowX: "auto" }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", background: "white", borderRadius: "6px", overflow: "hidden", fontSize: "12px" }}>
-                          <thead>
-                            <tr style={{ background: "#e2e8f0", color: "#334155", textAlign: "left" }}>
-                              <th style={{ padding: "7px 10px" }}>Day</th>
-                              <th style={{ padding: "7px 10px" }}>2-Hour Lab Block</th>
-                              <th style={{ padding: "7px 10px" }}>Practical Course</th>
-                              <th style={{ padding: "7px 10px" }}>Batches Scheduled</th>
-                              <th style={{ padding: "7px 10px" }}>Supervising Faculty</th>
-                              <th style={{ padding: "7px 10px" }}>Class Year</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {sessions.map((sess, idx) => (
-                              <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                                <td style={{ padding: "7px 10px", fontWeight: 700, color: "#1e3a8a" }}>
-                                  {sess.day}
-                                </td>
-                                <td style={{ padding: "7px 10px", color: "#475569", whiteSpace: "nowrap" }}>
-                                  <strong>P{sess.period}-P{sess.period + 1}</strong> ({sess.timing})
-                                </td>
-                                <td style={{ padding: "7px 10px", fontWeight: 700, color: "#0f172a" }}>
-                                  {sess.course}
-                                </td>
-                                <td style={{ padding: "7px 10px" }}>
-                                  <span style={{ padding: "2px 7px", borderRadius: "4px", background: "#fef3c7", color: "#92400e", fontWeight: 700, fontSize: "11px" }}>
-                                    Batch {sess.batches}
-                                  </span>
-                                </td>
-                                <td style={{ padding: "7px 10px", fontWeight: 600, color: "#1e40af" }}>
-                                  👨‍🏫 {sess.faculties}
-                                </td>
-                                <td style={{ padding: "7px 10px", color: "#334155" }}>
-                                  {sess.classYear} IT
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                      </td>
+                    </tr>
+                  </tbody>
+                )}
+                <tbody>
+                  {labsList.map((lab, idx) => (
+                    <tr key={lab.name} style={{ borderBottom: "1px solid #f1f5f9", background: idx % 2 === 0 ? "#ffffff" : "#f8fafc" }}>
+                      <td style={{ padding: "14px 20px", fontWeight: 700, color: "#0f172a", fontSize: "13.5px" }}>
+                        {editingRoomId === lab.name ? (
+                          <input value={editRoomForm.name} onChange={(e) => setEditRoomForm({ ...editRoomForm, name: e.target.value })} style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #94a3b8", fontSize: "13.5px", outline: "none" }} />
+                        ) : lab.name}
+                      </td>
+                      <td style={{ padding: "14px 20px", color: "#334155", fontWeight: 500, fontSize: "13px" }}>
+                        {editingRoomId === lab.name ? (
+                          <input type="number" value={editRoomForm.capacity} onChange={(e) => setEditRoomForm({ ...editRoomForm, capacity: e.target.value })} style={{ width: "100%", padding: "6px", borderRadius: "6px", border: "1px solid #94a3b8", fontSize: "13px", outline: "none" }} />
+                        ) : `${lab.capacity || 24} PCs`}
+                      </td>
+                      <td style={{ padding: "14px 20px", textAlign: "center" }}>
+                        {editingRoomId === lab.name ? (
+                          <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
+                            <button onClick={() => handleSaveRoom(lab.name)} style={{ background: "#22c55e", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Save</button>
+                            <button onClick={() => setEditingRoomId(null)} style={{ background: "#64748b", color: "white", border: "none", borderRadius: "4px", padding: "6px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Cancel</button>
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
+                            <button onClick={() => { setEditingRoomId(lab.name); setEditRoomForm({ name: lab.name, capacity: lab.capacity || 24, type: "LAB", floor: lab.floor || "" }); }} style={{ background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "4px", padding: "6px 16px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Edit</button>
+                            <button onClick={() => handleDeleteRoom(lab.name)} style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "4px", padding: "6px 16px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>Delete</button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
       </div>
 
-      {/* Perspective Quick-Launch Cards */}
-      <h3 style={{ margin: "0 0 16px", color: "#1e3a8a", fontSize: "18px" }}>
-        🚀 Department Perspectives & Navigation
-      </h3>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px" }}>
-        {/* Card 1: Master View */}
-        <Link
-          to="/master-timetable?view=ALL"
-          style={{
-            background: "#ffffff",
-            padding: "20px",
-            borderRadius: "10px",
-            border: "1px solid #cbd5e1",
-            textDecoration: "none",
-            color: "inherit",
-            transition: "all 0.15s ease",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            boxShadow: "0 2px 4px rgba(0,0,0,0.04)"
-          }}
-        >
-          <div>
-            <div style={{ fontSize: "24px", marginBottom: "8px" }}>📊</div>
-            <h4 style={{ margin: "0 0 6px", color: "#1e3a8a", fontSize: "16px" }}>Master Class Timetable</h4>
-            <p style={{ margin: 0, fontSize: "13px", color: "#64748b", lineHeight: "1.4" }}>
-              Full institutional master matrix displaying SY, TY, and B.Tech side-by-side with synchronized period timings and lunch recesses.
-            </p>
-          </div>
-          <span style={{ marginTop: "14px", fontSize: "13px", fontWeight: 700, color: "#2563eb" }}>
-            View Master Schedule →
-          </span>
-        </Link>
-
-        {/* Card 2: Student Class Timetables */}
-        <Link
-          to="/master-timetable?view=CLASS&class=SY"
-          style={{
-            background: "#ffffff",
-            padding: "20px",
-            borderRadius: "10px",
-            border: "1px solid #cbd5e1",
-            textDecoration: "none",
-            color: "inherit",
-            transition: "all 0.15s ease",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            boxShadow: "0 2px 4px rgba(0,0,0,0.04)"
-          }}
-        >
-          <div>
-            <div style={{ fontSize: "24px", marginBottom: "8px" }}>🎓</div>
-            <h4 style={{ margin: "0 0 6px", color: "#1e3a8a", fontSize: "16px" }}>Student Class Timetables</h4>
-            <p style={{ margin: 0, fontSize: "13px", color: "#64748b", lineHeight: "1.4" }}>
-              Clean single-class views for SY, TY, and B.Tech with 2-hour continuous practical lab blocks, batch division chips, and faculty reference indexes.
-            </p>
-          </div>
-          <span style={{ marginTop: "14px", fontSize: "13px", fontWeight: 700, color: "#2563eb" }}>
-            View Class Schedules →
-          </span>
-        </Link>
-
-        {/* Card 3: Faculty Schedules */}
-        <Link
-          to="/master-timetable?view=FACULTY"
-          style={{
-            background: "#ffffff",
-            padding: "20px",
-            borderRadius: "10px",
-            border: "1px solid #cbd5e1",
-            textDecoration: "none",
-            color: "inherit",
-            transition: "all 0.15s ease",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            boxShadow: "0 2px 4px rgba(0,0,0,0.04)"
-          }}
-        >
-          <div>
-            <div style={{ fontSize: "24px", marginBottom: "8px" }}>👨‍🏫</div>
-            <h4 style={{ margin: "0 0 6px", color: "#1e3a8a", fontSize: "16px" }}>Individual Faculty Schedules</h4>
-            <p style={{ margin: 0, fontSize: "13px", color: "#64748b", lineHeight: "1.4" }}>
-              Personal weekly timetables and workload analysis for all 13 teachers, showing core theory, lab batches, FY loads, and daily caps.
-            </p>
-          </div>
-          <span style={{ marginTop: "14px", fontSize: "13px", fontWeight: 700, color: "#2563eb" }}>
-            View Faculty Schedules →
-          </span>
-        </Link>
-
-        {/* Card 4: Computer Labs Matrix */}
-        <Link
-          to="/master-timetable?view=LAB"
-          style={{
-            background: "#ffffff",
-            padding: "20px",
-            borderRadius: "10px",
-            border: "1px solid #cbd5e1",
-            textDecoration: "none",
-            color: "inherit",
-            transition: "all 0.15s ease",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            boxShadow: "0 2px 4px rgba(0,0,0,0.04)"
-          }}
-        >
-          <div>
-            <div style={{ fontSize: "24px", marginBottom: "8px" }}>🔬</div>
-            <h4 style={{ margin: "0 0 6px", color: "#1e3a8a", fontSize: "16px" }}>Computer Laboratory Matrix</h4>
-            <p style={{ margin: 0, fontSize: "13px", color: "#64748b", lineHeight: "1.4" }}>
-              Room occupancy tracker for IL1 to IL6. Inspect scheduled practical batches, utilization percentages, and open lab practice hours.
-            </p>
-          </div>
-          <span style={{ marginTop: "14px", fontSize: "13px", fontWeight: 700, color: "#2563eb" }}>
-            View Lab Matrices →
-          </span>
-        </Link>
-
-        {/* Card 5: Department Inputs Hub */}
-        <Link
-          to="/master-timetable?inputs=open"
-          style={{
-            background: "#ffffff",
-            padding: "20px",
-            borderRadius: "10px",
-            border: "1px solid #cbd5e1",
-            textDecoration: "none",
-            color: "inherit",
-            transition: "all 0.15s ease",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            boxShadow: "0 2px 4px rgba(0,0,0,0.04)"
-          }}
-        >
-          <div>
-            <div style={{ fontSize: "24px", marginBottom: "8px" }}>⚙️</div>
-            <h4 style={{ margin: "0 0 6px", color: "#1e3a8a", fontSize: "16px" }}>Department Inputs & Settings</h4>
-            <p style={{ margin: 0, fontSize: "13px", color: "#64748b", lineHeight: "1.4" }}>
-              Unified management hub: configure faculty members, subjects, classrooms, coordinator lab courses, MDM fixed slots, and JSON backups.
-            </p>
-          </div>
-          <span style={{ marginTop: "14px", fontSize: "13px", fontWeight: 700, color: "#2563eb" }}>
-            Open Input Hub →
-          </span>
-        </Link>
-
-        {/* Card 6: Official PDF Print */}
-        <Link
-          to="/master-timetable"
-          style={{
-            background: "#ffffff",
-            padding: "20px",
-            borderRadius: "10px",
-            border: "1px solid #cbd5e1",
-            textDecoration: "none",
-            color: "inherit",
-            transition: "all 0.15s ease",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            boxShadow: "0 2px 4px rgba(0,0,0,0.04)"
-          }}
-        >
-          <div>
-            <div style={{ fontSize: "24px", marginBottom: "8px" }}>🖨️</div>
-            <h4 style={{ margin: "0 0 6px", color: "#1e3a8a", fontSize: "16px" }}>Official Print & PDF Export</h4>
-            <p style={{ margin: 0, fontSize: "13px", color: "#64748b", lineHeight: "1.4" }}>
-              One-click print and PDF generation formatted to institutional standards with official college headers, document metadata, and signature blocks.
-            </p>
-          </div>
-          <span style={{ marginTop: "14px", fontSize: "13px", fontWeight: 700, color: "#2563eb" }}>
-            Export Timetable →
-          </span>
-        </Link>
-      </div>
     </div>
   );
 }

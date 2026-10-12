@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 1240" width="760" height="1240">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .box { fill: #ffffff; stroke: #0f172a; stroke-width: 1.75; }
+      .box-alt { fill: #f8fafc; stroke: #0f172a; stroke-width: 1.75; }
+      .warn-box { fill: #ffffff; stroke: #0f172a; stroke-width: 1.5; stroke-dasharray: 4 2; }
+      .decision { fill: #ffffff; stroke: #0f172a; stroke-width: 1.75; }
+      .terminal { fill: #f1f5f9; stroke: #0f172a; stroke-width: 2; }
+      .arrow { stroke: #0f172a; stroke-width: 1.75; fill: none; marker-end: url(#arrowhead); }
+      .arrow-bypass { stroke: #0f172a; stroke-width: 1.5; fill: none; stroke-dasharray: 5 3; marker-end: url(#arrowhead); }
+      .text-title { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; font-weight: bold; fill: #0f172a; text-anchor: middle; }
+      .text-body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; fill: #334155; text-anchor: middle; }
+      .text-italic { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10.5px; font-style: italic; fill: #475569; text-anchor: middle; }
+      .label-decision { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11.5px; font-weight: bold; fill: #0f172a; text-anchor: middle; }
+    </style>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#0f172a" />
+    </marker>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="760" height="1240" class="bg" />
+
+  <!-- 1. Start Node -->
+  <rect x="220" y="35" width="320" height="44" rx="22" ry="22" class="terminal" />
+  <text x="380" y="62" class="text-title">Start: Theory Scheduling &amp; Finalization</text>
+
+  <!-- Arrow: Start -> Pass 1 -->
+  <line x1="380" y1="79" x2="380" y2="110" class="arrow" />
+
+  <!-- 2. Pass 1 Process Box -->
+  <rect x="140" y="110" width="480" height="82" class="box" />
+  <text x="380" y="132" class="text-title">Pass 1 — Strict Ideal Scheduling</text>
+  <text x="380" y="150" class="text-body">• Staggered start; max 1 period/subject/day (day dispersion)</text>
+  <text x="380" y="165" class="text-body">• Max 1 theory period per teacher per day in class</text>
+  <text x="380" y="180" class="text-body">• Enforce global daily teacher workload cap &amp; zero consecutive periods</text>
+
+  <!-- Arrow: Pass 1 -> Decision 1 -->
+  <line x1="380" y1="192" x2="380" y2="225" class="arrow" />
+
+  <!-- 3. Decision 1: All Periods Assigned in Pass 1? -->
+  <polygon points="380,225 540,265 380,305 220,265" class="decision" />
+  <text x="380" y="261" class="text-body" font-weight="bold">Are All Theory Periods</text>
+  <text x="380" y="276" class="text-body" font-weight="bold">Assigned in Pass 1?</text>
+
+  <!-- Branch No: Decision 1 -> Pass 2 -->
+  <line x1="380" y1="305" x2="380" y2="340" class="arrow" />
+  <text x="395" y="325" class="label-decision">No</text>
+
+  <!-- Branch Yes: Decision 1 -> Bypass to Assembly -->
+  <polyline points="540,265 680,265 680,920 380,920" class="arrow-bypass" />
+  <text x="565" y="255" class="label-decision">Yes</text>
+
+  <!-- 4. Pass 2 Process Box -->
+  <rect x="140" y="340" width="480" height="82" class="box" />
+  <text x="380" y="362" class="text-title">Pass 2 — Balanced Relaxation Scheduling</text>
+  <text x="380" y="380" class="text-body">• Relax per-class teacher limit to max 2 theory periods/day</text>
+  <text x="380" y="395" class="text-body">• Preserve separate days for subjects &amp; global daily teacher cap</text>
+  <text x="380" y="410" class="text-body">• Strictly enforce zero consecutive periods &amp; verify availability</text>
+
+  <!-- Arrow: Pass 2 -> Decision 2 -->
+  <line x1="380" y1="422" x2="380" y2="455" class="arrow" />
+
+  <!-- 5. Decision 2: All Periods Assigned in Pass 2? -->
+  <polygon points="380,455 540,495 380,535 220,495" class="decision" />
+  <text x="380" y="491" class="text-body" font-weight="bold">Are All Theory Periods</text>
+  <text x="380" y="506" class="text-body" font-weight="bold">Assigned in Pass 2?</text>
+
+  <!-- Branch No: Decision 2 -> Pass 3 -->
+  <line x1="380" y1="535" x2="380" y2="570" class="arrow" />
+  <text x="395" y="555" class="label-decision">No</text>
+
+  <!-- Branch Yes: Decision 2 -> Bypass to Assembly -->
+  <polyline points="540,495 680,495" class="arrow-bypass" />
+  <text x="565" y="485" class="label-decision">Yes</text>
+
+  <!-- 6. Pass 3 Process Box -->
+  <rect x="140" y="570" width="480" height="82" class="box" />
+  <text x="380" y="592" class="text-title">Pass 3 — Fallback Scheduling</text>
+  <text x="380" y="610" class="text-body">• Relax subject-day dispersion (can place on same day)</text>
+  <text x="380" y="625" class="text-body">• Relax per-class teacher daily limit and global daily cap</text>
+  <text x="380" y="640" class="text-body">• Strictly retain no-consecutive-periods rule &amp; slot availability</text>
+
+  <!-- Arrow: Pass 3 -> Decision 3 -->
+  <line x1="380" y1="652" x2="380" y2="685" class="arrow" />
+
+  <!-- 7. Decision 3: Any Periods Still Unassigned? -->
+  <polygon points="380,685 540,725 380,765 220,725" class="decision" />
+  <text x="380" y="721" class="text-body" font-weight="bold">Any Theory Periods</text>
+  <text x="380" y="736" class="text-body" font-weight="bold">Still Unassigned?</text>
+
+  <!-- Branch Yes: Decision 3 -> Record Diagnostics -->
+  <line x1="380" y1="765" x2="380" y2="800" class="arrow" />
+  <text x="395" y="785" class="label-decision">Yes</text>
+
+  <!-- Branch No: Decision 3 -> Skip Diagnostics to Merge -->
+  <polyline points="220,725 90,725 90,920 380,920" class="arrow-bypass" />
+  <text x="155" y="715" class="label-decision">No</text>
+
+  <!-- 8. Process Box: Record Bottleneck Diagnostics -->
+  <rect x="150" y="800" width="460" height="68" class="warn-box" />
+  <text x="380" y="822" class="text-title">Record Bottleneck Errors &amp; Diagnostics</text>
+  <text x="380" y="839" class="text-body">• Scan vacant periods and identify conflicting teachers/rooms</text>
+  <text x="380" y="854" class="text-body">• Log error to conflictLog and append BOTTLENECK to diagnostics</text>
+
+  <!-- Arrow: Diagnostics -> Merge point at Assembly -->
+  <line x1="380" y1="868" x2="380" y2="945" class="arrow" />
+
+  <!-- 9. Process Box: Assemble Final Timetable -->
+  <rect x="140" y="945" width="480" height="74" class="box" />
+  <text x="380" y="967" class="text-title">Assemble Final Timetable</text>
+  <text x="380" y="985" class="text-body">• Flatten schedules across all cohorts (SY, TY, BTech)</text>
+  <text x="380" y="1000" class="text-body">• Fill remaining empty periods with 'FREE' (—)</text>
+  <text x="380" y="1013" class="text-italic">• Calculate total weekly contact hours per cohort</text>
+
+  <!-- Arrow: Assemble -> Finalize -->
+  <line x1="380" y1="1019" x2="380" y2="1050" class="arrow" />
+
+  <!-- 10. Process Box: Finalize & Return Response -->
+  <rect x="140" y="1050" width="480" height="74" class="box-alt" />
+  <text x="380" y="1072" class="text-title">Finalize &amp; Return Response</text>
+  <text x="380" y="1090" class="text-body">• Append SUCCESS diagnostic if conflict log is empty</text>
+  <text x="380" y="1105" class="text-body">• Set response status = FINALIZED (even if unplaced periods exist)</text>
+  <text x="380" y="1118" class="text-body">• Return complete MasterTimetableResponse object</text>
+
+  <!-- Arrow: Finalize -> End -->
+  <line x1="380" y1="1124" x2="380" y2="1155" class="arrow" />
+
+  <!-- 11. End Node -->
+  <rect x="270" y="1155" width="220" height="44" rx="22" ry="22" class="terminal" />
+  <text x="380" y="1182" class="text-title">End</text>
+</svg>

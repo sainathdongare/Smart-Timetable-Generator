@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 1180" width="760" height="1180">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .box { fill: #ffffff; stroke: #0f172a; stroke-width: 1.75; }
+      .box-alt { fill: #f8fafc; stroke: #0f172a; stroke-width: 1.75; }
+      .decision { fill: #ffffff; stroke: #0f172a; stroke-width: 1.75; }
+      .terminal { fill: #f1f5f9; stroke: #0f172a; stroke-width: 2; }
+      .arrow { stroke: #0f172a; stroke-width: 1.75; fill: none; marker-end: url(#arrowhead); }
+      .arrow-loop { stroke: #0f172a; stroke-width: 1.5; fill: none; stroke-dasharray: 5 3; marker-end: url(#arrowhead); }
+      .text-title { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; font-weight: bold; fill: #0f172a; text-anchor: middle; }
+      .text-body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; fill: #334155; text-anchor: middle; }
+      .text-italic { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10.5px; font-style: italic; fill: #475569; text-anchor: middle; }
+      .label-decision { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11.5px; font-weight: bold; fill: #0f172a; text-anchor: middle; }
+    </style>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#0f172a" />
+    </marker>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="760" height="1180" class="bg" />
+
+  <!-- 1. Start Node -->
+  <rect x="235" y="40" width="290" height="46" rx="23" ry="23" class="terminal" />
+  <text x="380" y="68" class="text-title">Start: Fixed &amp; Practical Scheduling</text>
+
+  <!-- Arrow: Start -> Box 1 -->
+  <line x1="380" y1="86" x2="380" y2="120" class="arrow" />
+
+  <!-- Box 1: Allocate Fixed Sessions -->
+  <rect x="155" y="120" width="450" height="66" class="box" />
+  <text x="380" y="142" class="text-title">1. Allocate Fixed Sessions &amp; Record Any Clashes</text>
+  <text x="380" y="159" class="text-body">• Place mandatory institutional slots directly into class schedules</text>
+  <text x="380" y="174" class="text-italic">• Detect &amp; log room/teacher collisions in diagnostics (no rejection)</text>
+
+  <!-- Arrow: Box 1 -> Box 2 -->
+  <line x1="380" y1="186" x2="380" y2="220" class="arrow" />
+
+  <!-- Box 2: Decision - Explicit Practicals? -->
+  <polygon points="380,220 535,260 380,300 225,260" class="decision" />
+  <text x="380" y="256" class="text-body" font-weight="bold">2. Are Practical Sessions</text>
+  <text x="380" y="271" class="text-body" font-weight="bold">Provided Explicitly?</text>
+
+  <!-- Branch Yes: Explicit Path (Box 3) -->
+  <line x1="535" y1="260" x2="590" y2="260" class="arrow" />
+  <text x="560" y="250" class="label-decision">Yes</text>
+
+  <rect x="590" y="230" width="150" height="60" class="box-alt" />
+  <text x="665" y="252" class="text-title">3. Schedule Explicit</text>
+  <text x="665" y="267" class="text-title">Practical Batches</text>
+  <text x="665" y="280" class="text-italic">(Protects fixed slots)</text>
+
+  <!-- Arrow: Explicit Path -> Joins before Decision 9 -->
+  <polyline points="665,290 665,850 540,850" class="arrow" />
+
+  <!-- Branch No: Box 2 -> Box 4 -->
+  <line x1="380" y1="300" x2="380" y2="335" class="arrow" />
+  <text x="395" y="320" class="label-decision">No</text>
+
+  <!-- Box 4: Decision - Auto-Scheduling Required? -->
+  <polygon points="380,335 535,375 380,415 225,375" class="decision" />
+  <text x="380" y="371" class="text-body" font-weight="bold">4. Are Lab Courses Present</text>
+  <text x="380" y="386" class="text-body" font-weight="bold">for Auto-Scheduling?</text>
+
+  <!-- Branch No: Skip directly to End -->
+  <polyline points="225,375 70,375 70,1075 225,1075" class="arrow-loop" />
+  <text x="145" y="365" class="label-decision">No (Skip)</text>
+
+  <!-- Branch Yes: Box 4 -> Box 5 -->
+  <line x1="380" y1="415" x2="380" y2="455" class="arrow" />
+  <text x="395" y="438" class="label-decision">Yes</text>
+
+  <!-- Box 5: Select 2-Period Block -->
+  <rect x="155" y="455" width="450" height="66" class="box" />
+  <text x="380" y="476" class="text-title">5. Select Available 2-Period Practical Block</text>
+  <text x="380" y="493" class="text-body">• Pick unused day (max 1 lab/day limit) &amp; block (P1-P2, P3-P4, P5-P6)</text>
+  <text x="380" y="508" class="text-italic">• Verify cohort class schedule is free across BOTH periods</text>
+
+  <!-- Arrow: Box 5 -> Box 6 -->
+  <line x1="380" y1="521" x2="380" y2="555" class="arrow" />
+
+  <!-- Box 6: Decision - Faculty & Lab Available? -->
+  <polygon points="380,555 540,605 380,655 220,605" class="decision" />
+  <text x="380" y="598" class="text-body" font-weight="bold">6. Are Required Faculty &amp;</text>
+  <text x="380" y="613" class="text-body" font-weight="bold">Lab Rooms Available?</text>
+  <text x="380" y="626" class="text-italic">(For all 4 batches across both periods)</text>
+
+  <!-- Branch Yes: Box 6 -> Box 7 -->
+  <line x1="380" y1="655" x2="380" y2="695" class="arrow" />
+  <text x="395" y="678" class="label-decision">Yes</text>
+
+  <!-- Branch No: Box 6 -> Box 8 (Fallback) -->
+  <line x1="540" y1="605" x2="595" y2="605" class="arrow" />
+  <text x="565" y="595" class="label-decision">No</text>
+
+  <rect x="595" y="575" width="145" height="60" class="box-alt" />
+  <text x="667" y="595" class="text-title">8. Fallback Search:</text>
+  <text x="667" y="610" class="text-body">Alternate Teacher, Lab,</text>
+  <text x="667" y="623" class="text-italic">or Reject Block</text>
+
+  <!-- Arrow: Fallback joins into Decision 9 -->
+  <polyline points="667,635 667,830 520,830" class="arrow" />
+
+  <!-- Box 7: Assign Batches & Reserve Resources -->
+  <rect x="155" y="695" width="450" height="66" class="box" />
+  <text x="380" y="716" class="text-title">7. Assign Batches &amp; Reserve Lab Resources</text>
+  <text x="380" y="733" class="text-body">• Rotate lab courses across batches (I1..I4) via Latin Square</text>
+  <text x="380" y="748" class="text-body">• Commit linked 2-period cell &amp; mark teachers and labs occupied</text>
+
+  <!-- Arrow: Box 7 -> Box 9 -->
+  <line x1="380" y1="761" x2="380" y2="800" class="arrow" />
+
+  <!-- Box 9: Decision - Loop or Completion -->
+  <polygon points="380,800 540,855 380,910 220,855" class="decision" />
+  <text x="380" y="848" class="text-body" font-weight="bold">9. All Lab Sessions Done OR</text>
+  <text x="380" y="863" class="text-body" font-weight="bold">Available Options Exhausted?</text>
+
+  <!-- Branch No: Loop back to Box 5 -->
+  <polyline points="220,855 115,855 115,488 155,488" class="arrow-loop" />
+  <text x="145" y="845" class="label-decision">No</text>
+  <text x="145" y="530" class="text-italic">(Next Session / Retry Block)</text>
+
+  <!-- Branch Yes: Complete -> Handover to Stage 5 -->
+  <line x1="380" y1="910" x2="380" y2="960" class="arrow" />
+  <text x="400" y="938" class="label-decision">Yes</text>
+
+  <!-- 10. End Node -->
+  <rect x="215" y="960" width="330" height="46" rx="23" ry="23" class="terminal" />
+  <text x="380" y="988" class="text-title">10. Proceed to Theory Scheduling (Stage 5)</text>
+</svg>

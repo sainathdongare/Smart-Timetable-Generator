@@ -1,3 +1,4 @@
+import React, { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
@@ -6,6 +7,16 @@ function Sidebar() {
   const location = useLocation();
   const search = location.search;
   const path = location.pathname;
+
+  const [yearsDropdownOpen, setYearsDropdownOpen] = useState(
+    search.includes("view=CLASS")
+  );
+  const [facultyDropdownOpen, setFacultyDropdownOpen] = useState(
+    search.includes("view=FACULTY")
+  );
+  const [facilitiesDropdownOpen, setFacilitiesDropdownOpen] = useState(
+    search.includes("view=ROOM") || search.includes("view=LAB")
+  );
 
   const isActive = (targetPath, targetSearch = "") => {
     if (path !== targetPath) return false;
@@ -40,6 +51,25 @@ function Sidebar() {
           🏠 Dashboard
         </Link>
 
+        <div className="nav-section">MANAGEMENT</div>
+
+        <Link
+          to="/master-timetable?inputs=open"
+          className={
+            "nav-manage" +
+            (isActive("/master-timetable", "inputs=open") ? " nav-active" : "")
+          }
+        >
+          ⚙️ Manage Department Inputs
+        </Link>
+
+        <Link
+          to="/saved-timetables"
+          className={path === "/saved-timetables" ? "nav-active" : ""}
+        >
+          💾 Saved Timetables
+        </Link>
+
         <div className="nav-section">CLASS SCHEDULES</div>
 
         <Link
@@ -53,26 +83,57 @@ function Sidebar() {
           📊 Master Class Time Table
         </Link>
 
-        <Link
-          to="/master-timetable?view=CLASS&class=SY"
-          className={isActive("/master-timetable", "view=CLASS&class=SY") ? "nav-active" : ""}
+        <div 
+          onClick={() => setYearsDropdownOpen(!yearsDropdownOpen)}
+          style={{
+            padding: "10px 16px",
+            color: yearsDropdownOpen ? "#f8fafc" : "#cbd5e1",
+            fontSize: "13.5px",
+            fontWeight: 600,
+            cursor: "pointer",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            borderRadius: "8px",
+            marginBottom: "4px",
+            transition: "all 0.2s ease",
+            background: yearsDropdownOpen ? "rgba(255,255,255,0.05)" : "transparent"
+          }}
+          onMouseEnter={(e) => {
+             if (!yearsDropdownOpen) e.currentTarget.style.color = "#f8fafc";
+          }}
+          onMouseLeave={(e) => {
+             if (!yearsDropdownOpen) e.currentTarget.style.color = "#cbd5e1";
+          }}
         >
-          🎓 Second Year
-        </Link>
+          <span style={{ display: "flex", alignItems: "center", gap: "10px" }}>🎓 Class Timetable</span>
+          <span style={{ fontSize: "10px" }}>{yearsDropdownOpen ? "▼" : "▶"}</span>
+        </div>
 
-        <Link
-          to="/master-timetable?view=CLASS&class=TY"
-          className={isActive("/master-timetable", "view=CLASS&class=TY") ? "nav-active" : ""}
-        >
-          🎓 Third Year
-        </Link>
+        {yearsDropdownOpen && (
+          <div style={{ display: "flex", flexDirection: "column", paddingLeft: "15px" }}>
+            <Link
+              to="/master-timetable?view=CLASS&class=SY"
+              className={isActive("/master-timetable", "view=CLASS&class=SY") ? "nav-active" : ""}
+            >
+              🎓 Second Year
+            </Link>
 
-        <Link
-          to="/master-timetable?view=CLASS&class=BTECH"
-          className={isActive("/master-timetable", "view=CLASS&class=BTECH") ? "nav-active" : ""}
-        >
-          🎓 Final year
-        </Link>
+            <Link
+              to="/master-timetable?view=CLASS&class=TY"
+              className={isActive("/master-timetable", "view=CLASS&class=TY") ? "nav-active" : ""}
+            >
+              🎓 Third Year
+            </Link>
+
+            <Link
+              to="/master-timetable?view=CLASS&class=BTECH"
+              className={isActive("/master-timetable", "view=CLASS&class=BTECH") ? "nav-active" : ""}
+            >
+              🎓 Final year
+            </Link>
+          </div>
+        )}
 
         <div className="nav-section">FACULTY & WORKLOAD</div>
 
@@ -83,63 +144,113 @@ function Sidebar() {
           📋 Total Staff Load Sheet
         </Link>
 
-        <Link
-          to="/master-timetable?view=FACULTY_MASTER"
-          className={isActive("/master-timetable", "view=FACULTY_MASTER") ? "nav-active" : ""}
+        <div 
+          onClick={() => setFacultyDropdownOpen(!facultyDropdownOpen)}
+          style={{
+            padding: "10px 16px",
+            color: facultyDropdownOpen ? "#f8fafc" : "#cbd5e1",
+            fontSize: "13.5px",
+            fontWeight: 600,
+            cursor: "pointer",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            borderRadius: "8px",
+            marginBottom: "4px",
+            transition: "all 0.2s ease",
+            background: facultyDropdownOpen ? "rgba(255,255,255,0.05)" : "transparent"
+          }}
+          onMouseEnter={(e) => {
+             if (!facultyDropdownOpen) e.currentTarget.style.color = "#f8fafc";
+          }}
+          onMouseLeave={(e) => {
+             if (!facultyDropdownOpen) e.currentTarget.style.color = "#cbd5e1";
+          }}
         >
-          👨‍🏫 Master Personal faculty Time Table
-        </Link>
+          <span style={{ display: "flex", alignItems: "center", gap: "10px" }}>👨‍🏫 Faculty Timetables</span>
+          <span style={{ fontSize: "10px" }}>{facultyDropdownOpen ? "▼" : "▶"}</span>
+        </div>
 
-        <Link
-          to="/master-timetable?view=FACULTY"
-          className={isActive("/master-timetable", "view=FACULTY") && !search.includes("view=FACULTY_MASTER") ? "nav-active" : ""}
+        {facultyDropdownOpen && (
+          <div style={{ display: "flex", flexDirection: "column", paddingLeft: "15px" }}>
+            <Link
+              to="/master-timetable?view=FACULTY_MASTER"
+              className={isActive("/master-timetable", "view=FACULTY_MASTER") ? "nav-active" : ""}
+            >
+              👨‍🏫 Master Personal faculty Time Table
+            </Link>
+
+            <Link
+              to="/master-timetable?view=FACULTY"
+              className={isActive("/master-timetable", "view=FACULTY") && !search.includes("view=FACULTY_MASTER") ? "nav-active" : ""}
+            >
+              👤 Personal Faculty Time Table
+            </Link>
+          </div>
+        )}
+
+        <div className="nav-section">CLASSROOM AND LABORATORY</div>
+
+        <div 
+          onClick={() => setFacilitiesDropdownOpen(!facilitiesDropdownOpen)}
+          style={{
+            padding: "10px 16px",
+            color: facilitiesDropdownOpen ? "#f8fafc" : "#cbd5e1",
+            fontSize: "13.5px",
+            fontWeight: 600,
+            cursor: "pointer",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            borderRadius: "8px",
+            marginBottom: "4px",
+            transition: "all 0.2s ease",
+            background: facilitiesDropdownOpen ? "rgba(255,255,255,0.05)" : "transparent"
+          }}
+          onMouseEnter={(e) => {
+             if (!facilitiesDropdownOpen) e.currentTarget.style.color = "#f8fafc";
+          }}
+          onMouseLeave={(e) => {
+             if (!facilitiesDropdownOpen) e.currentTarget.style.color = "#cbd5e1";
+          }}
         >
-          👤 Personal Faculty Time Table
-        </Link>
+          <span style={{ display: "flex", alignItems: "center", gap: "10px" }}>🏛️ Facilities Timetables</span>
+          <span style={{ fontSize: "10px" }}>{facilitiesDropdownOpen ? "▼" : "▶"}</span>
+        </div>
 
-        <div className="nav-section">CLASSROOM SCHEDULES</div>
+        {facilitiesDropdownOpen && (
+          <div style={{ display: "flex", flexDirection: "column", paddingLeft: "15px" }}>
+            <Link
+              to="/master-timetable?view=ROOM_MASTER"
+              className={isActive("/master-timetable", "view=ROOM_MASTER") ? "nav-active" : ""}
+            >
+              🏛️ Master Classroom Time Table
+            </Link>
 
-        <Link
-          to="/master-timetable?view=ROOM_MASTER"
-          className={isActive("/master-timetable", "view=ROOM_MASTER") ? "nav-active" : ""}
-        >
-          🏛️ Master Classroom Time Table
-        </Link>
+            <Link
+              to="/master-timetable?view=ROOM"
+              className={isActive("/master-timetable", "view=ROOM") && !search.includes("view=ROOM_MASTER") ? "nav-active" : ""}
+            >
+              🚪 Personal Classroom Time Table
+            </Link>
 
-        <Link
-          to="/master-timetable?view=ROOM"
-          className={isActive("/master-timetable", "view=ROOM") && !search.includes("view=ROOM_MASTER") ? "nav-active" : ""}
-        >
-          🚪 Personal Classroom Time Table
-        </Link>
+            <Link
+              to="/master-timetable?view=LAB&lab=ALL"
+              className={search.includes("view=LAB") && (search.includes("lab=ALL") || !search.includes("lab=")) ? "nav-active" : ""}
+            >
+              🔬 Lab Master Time Table
+            </Link>
 
-        <div className="nav-section">LABORATORY SCHEDULES</div>
+            <Link
+              to="/master-timetable?view=LAB&lab=IL1"
+              className={search.includes("view=LAB") && search.includes("lab=") && !search.includes("lab=ALL") ? "nav-active" : ""}
+            >
+              💻 Lab Personal Time Table
+            </Link>
+          </div>
+        )}
 
-        <Link
-          to="/master-timetable?view=LAB&lab=ALL"
-          className={search.includes("view=LAB") && (search.includes("lab=ALL") || !search.includes("lab=")) ? "nav-active" : ""}
-        >
-          🔬 Lab Master Time Table
-        </Link>
 
-        <Link
-          to="/master-timetable?view=LAB&lab=IL1"
-          className={search.includes("view=LAB") && search.includes("lab=") && !search.includes("lab=ALL") ? "nav-active" : ""}
-        >
-          💻 Lab Personal Time Table
-        </Link>
-
-        <div className="nav-section">MANAGEMENT</div>
-
-        <Link
-          to="/master-timetable?inputs=open"
-          className={
-            "nav-manage" +
-            (isActive("/master-timetable", "inputs=open") ? " nav-active" : "")
-          }
-        >
-          ⚙️ Manage Department Inputs
-        </Link>
       </nav>
 
       {/* Admin User Profile & Sign Out */}

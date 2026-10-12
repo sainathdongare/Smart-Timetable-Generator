@@ -5,7 +5,9 @@ import {
   saveMasterTimetable,
   getLatestMasterTimetable,
   getAllMasterTimetables,
-  deleteMasterTimetable
+  deleteMasterTimetable,
+  getSavedTimetableById,
+  saveTimetableSnapshot
 } from "../api/timetableApi";
 import { ritDepartmentPreset } from "../data/ritDepartmentPreset";
 import {
@@ -48,8 +50,8 @@ function MasterTimetable() {
   const [selectedLab, setSelectedLab] = useState(initialLab); // "ALL", "IL1", "IL2", "IL3", "IL4", "IL5", "IL6"
   const [selectedRoom, setSelectedRoom] = useState(initialRoom); // "CR-27", "CR-26", "CR-212"
   const [facultyMasterDay, setFacultyMasterDay] = useState("ALL"); // "ALL", "MONDAY", "TUESDAY", etc.
-  const [academicSession, setAcademicSession] = useState("2026-27");
-  const [academicSemester, setAcademicSemester] = useState("PART-I"); // "PART-I" (Odd) or "PART-II" (Even)
+  const [academicSession, setAcademicSession] = useState(() => localStorage.getItem("activeAcademicSession") || "2026-27");
+  const [academicSemester, setAcademicSemester] = useState(() => localStorage.getItem("activeAcademicSemester") || "PART-I"); // "PART-I" (Odd) or "PART-II" (Even)
   const [facultyPrintViewMode, setFacultyPrintViewMode] = useState("OFFICIAL"); // "OFFICIAL" (Exact RIT image layout) or "MODERN"
   const [classPrintViewMode, setClassPrintViewMode] = useState("OFFICIAL"); // "OFFICIAL" (Exact RIT image layout) or "MODERN"
   const [conflictLog, setConflictLog] = useState([]);
@@ -61,6 +63,10 @@ function MasterTimetable() {
   const [dbTimetables, setDbTimetables] = useState([]);
   const [showDbModal, setShowDbModal] = useState(false);
   const [customSaveName, setCustomSaveName] = useState("");
+  const [readOnlyMode, setReadOnlyMode] = useState(false);
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [saveTimetableName, setSaveTimetableName] = useState("");
+  const snapshotId = searchParams.get("snapshotId");
 
   // Synchronize view and inputs when URL search params change
   useEffect(() => {
@@ -132,7 +138,7 @@ function MasterTimetable() {
     externalType: "",
     externalDesc: ""
   });
-  
+
   // Custom Inputs Manager state
   const [showInputManager, setShowInputManager] = useState(initialInputsOpen);
   const [activeInputTab, setActiveInputTab] = useState(initialInputTab); // "FACULTY", "ROOMS", "SY", "TY", "BTECH", "PRACTICALS", "FIXED", "EXT"
@@ -145,7 +151,7 @@ function MasterTimetable() {
         if (parsed?.version === ritDepartmentPreset.version) {
           return parsed;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
     return JSON.parse(JSON.stringify(ritDepartmentPreset));
   });
@@ -168,7 +174,7 @@ function MasterTimetable() {
     try {
       const saved = localStorage.getItem("rit_available_sessions");
       if (saved) return JSON.parse(saved);
-    } catch (e) {}
+    } catch (e) { }
     return ["2026-27", "2025-26", "2024-25", "2023-24"];
   });
 
@@ -202,7 +208,7 @@ function MasterTimetable() {
 
   const [newRoomName, setNewRoomName] = useState("");
   const [newRoomType, setNewRoomType] = useState("THEORY");
-  
+
   const [newSubCode, setNewSubCode] = useState("");
   const [newSubName, setNewSubName] = useState("");
   const [newSubPeriods, setNewSubPeriods] = useState(3);
@@ -226,7 +232,8 @@ function MasterTimetable() {
   const [newLabFaculties, setNewLabFaculties] = useState([]);
   const [newLabBatchMap, setNewLabBatchMap] = useState({ I1: "", I2: "", I3: "", I4: "" });
   const [newLabRoom, setNewLabRoom] = useState("IL1");
-  const [editingLabCourse, setEditingLabCourse] = useState(null); // { yearKey, index, code, name, faculties, batchFacultyMap, preferredRoom }
+  const [newLabContactHours, setNewLabContactHours] = useState("2");
+  const [editingLabCourse, setEditingLabCourse] = useState(null); // { yearKey, index, code, name, faculties, batchFacultyMap, preferredRoom, contactHours }
 
   // Fixed Slots state
   const [newFixedYear, setNewFixedYear] = useState("SY");
@@ -528,6 +535,30 @@ function MasterTimetable() {
 
   // Auto-generate or restore saved master timetable on mount
   useEffect(() => {
+    if (snapshotId) {
+      setReadOnlyMode(true);
+
+      // Prevent localStorage overwrites for the current session
+      const originalSetItem = window.localStorage.setItem;
+      window.localStorage.setItem = function (key, value) {
+        if (key === "masterTimetableData" || key === "customMasterPayload" || key === "timetableSwapHistory" || key === "timetableHasManualAdjustments") {
+          return;
+        }
+        originalSetItem.apply(this, arguments);
+      };
+
+      getSavedTimetableById(snapshotId).then(snapshot => {
+        const payload = JSON.parse(snapshot.timetableData);
+        if (payload.masterData) setMasterData(payload.masterData);
+        if (payload.inputs) setInputs(payload.inputs);
+      }).catch(err => console.error("Failed to load snapshot", err));
+
+      return () => {
+        // Restore original on unmount
+        window.localStorage.setItem = originalSetItem;
+      };
+    }
+
     const savedMaster = localStorage.getItem("masterTimetableData");
     const hasAdjustments = localStorage.getItem("timetableHasManualAdjustments") === "true";
     if (savedMaster) {
@@ -554,7 +585,7 @@ function MasterTimetable() {
           setDiagnostics(liveDiagnostics);
           return;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
     handleGenerate(inputs, true);
   }, []);
@@ -588,8 +619,8 @@ function MasterTimetable() {
             const cellBlockStr = (cell.period === 1 || cell.period === 2)
               ? "P1-P2"
               : (cell.period === 3 || cell.period === 4)
-              ? "P3-P4"
-              : "P5-P6";
+                ? "P3-P4"
+                : "P5-P6";
 
             cell.subEntries = cell.subEntries.map((sub) => {
               let updatedFac = sub.faculty;
@@ -608,7 +639,7 @@ function MasterTimetable() {
                 // Priority 2: Check labCourses for batchFacultyMap or general faculty
                 const matchedLab = labCoursesList.find(
                   (lc) => (lc.code && lc.code.trim().toUpperCase() === sub.course?.trim().toUpperCase()) ||
-                          (lc.name && lc.name.trim().toUpperCase() === sub.course?.trim().toUpperCase())
+                    (lc.name && lc.name.trim().toUpperCase() === sub.course?.trim().toUpperCase())
                 );
                 if (matchedLab) {
                   if (matchedLab.batchFacultyMap && matchedLab.batchFacultyMap[sub.batch]) {
@@ -624,8 +655,8 @@ function MasterTimetable() {
                 // Priority 3: Fallback practicals list for batch + practical course match
                 const matchedPrac = practicalsList.find(
                   (pr) => pr.batch === sub.batch &&
-                          ((pr.practical && pr.practical.trim().toUpperCase() === sub.course?.trim().toUpperCase()) ||
-                           (pr.subject && pr.subject.trim().toUpperCase() === sub.course?.trim().toUpperCase()))
+                    ((pr.practical && pr.practical.trim().toUpperCase() === sub.course?.trim().toUpperCase()) ||
+                      (pr.subject && pr.subject.trim().toUpperCase() === sub.course?.trim().toUpperCase()))
                 );
                 if (matchedPrac) {
                   if (matchedPrac.faculty) updatedFac = matchedPrac.faculty;
@@ -654,13 +685,13 @@ function MasterTimetable() {
 
         // 2. FIXED SLOTS (MDM, OE, MENTORING, CAPSTONE, ETC.)
         const matchedFixed = fixedSlotsList.find(
-          (fs) => fs.day === cell.day && fs.period === cell.period
+          (fs) => fs.day === cell.day && getExternalLoadPeriods(fs).includes(cell.period)
         ) || fixedSlotsList.find(
           (fs) => (fs.courseName && fs.courseName.trim().toUpperCase() === cell.course.trim().toUpperCase()) ||
-                  (fs.subjectCode && fs.subjectCode.trim().toUpperCase() === cell.course.trim().toUpperCase())
+            (fs.subjectCode && fs.subjectCode.trim().toUpperCase() === cell.course.trim().toUpperCase())
         );
-        if (matchedFixed && (cell.cellType !== "THEORY" || matchedFixed.courseName?.toUpperCase().includes(cell.course.toUpperCase()) || (matchedFixed.day === cell.day && matchedFixed.period === cell.period))) {
-          if (matchedFixed.day === cell.day && matchedFixed.period === cell.period && matchedFixed.courseName) {
+        if (matchedFixed && (cell.cellType !== "THEORY" || matchedFixed.courseName?.toUpperCase().includes(cell.course.toUpperCase()) || (matchedFixed.day === cell.day && getExternalLoadPeriods(matchedFixed).includes(cell.period)))) {
+          if (matchedFixed.day === cell.day && getExternalLoadPeriods(matchedFixed).includes(cell.period) && matchedFixed.courseName) {
             cell.course = matchedFixed.courseName;
           }
           if (matchedFixed.facultyName !== undefined) cell.faculty = matchedFixed.facultyName;
@@ -672,7 +703,7 @@ function MasterTimetable() {
         const cleanCourse = cell.course.trim().toUpperCase();
         const matchedSub = subjectsList.find(
           (s) => (s.code && s.code.trim().toUpperCase() === cleanCourse) ||
-                 (s.name && s.name.trim().toUpperCase() === cleanCourse)
+            (s.name && s.name.trim().toUpperCase() === cleanCourse)
         );
 
         if (matchedSub) {
@@ -742,8 +773,8 @@ function MasterTimetable() {
     }
 
     const totalSubjects = (dataToSend?.yearData?.SY?.subjects?.length || 0) +
-                          (dataToSend?.yearData?.TY?.subjects?.length || 0) +
-                          (dataToSend?.yearData?.BTECH?.subjects?.length || 0);
+      (dataToSend?.yearData?.TY?.subjects?.length || 0) +
+      (dataToSend?.yearData?.BTECH?.subjects?.length || 0);
     if (totalSubjects === 0 && (dataToSend?.faculties?.length || 0) === 0) {
       alert("Department configuration is currently blank. Please add faculty members and subjects before generating a timetable.");
       return;
@@ -779,6 +810,23 @@ function MasterTimetable() {
         payloadToSend.externalLoads = flattenedExt;
       }
 
+      ["SY", "TY", "BTECH"].forEach(yr => {
+        if (payloadToSend.yearData?.[yr]?.fixedSlots) {
+          const flattenedFixed = [];
+          payloadToSend.yearData[yr].fixedSlots.forEach(fs => {
+            const pList = getExternalLoadPeriods(fs);
+            if (pList.length > 1) {
+              pList.forEach(p => {
+                flattenedFixed.push({ ...fs, period: p });
+              });
+            } else {
+              flattenedFixed.push({ ...fs, period: pList[0] || Number(fs.period) || 1 });
+            }
+          });
+          payloadToSend.yearData[yr].fixedSlots = flattenedFixed;
+        }
+      });
+
       const res = await generateMasterTimetable(payloadToSend);
       // Run live audit to verify constraints against the generated schedules
       const { liveDiagnostics, liveConflicts } = computeLiveDiagnostics(
@@ -799,6 +847,7 @@ function MasterTimetable() {
       setConflictLog(liveConflicts);
       setDiagnostics(liveDiagnostics);
       localStorage.setItem("masterTimetableData", JSON.stringify(res));
+      localStorage.setItem(`masterTimetableData_${academicSession}_${academicSemester}`, JSON.stringify(res));
       localStorage.setItem("customMasterPayload", JSON.stringify(dataToSend));
       setSwapAlert({
         type: "success",
@@ -809,6 +858,108 @@ function MasterTimetable() {
       alert("Failed to connect to backend server. Make sure Spring Boot is running on port 8080.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSessionChange = (val) => {
+    if (academicSession === val) return;
+    if (val === "__ADD_NEW__") {
+      setNewYearSetupSession(academicSession);
+      setNewYearSetupSemester(academicSemester);
+      setShowCustomSessionField(true);
+      setNewYearModalOpen(true);
+      return;
+    }
+
+    // Auto-save current session's inputs and timetable before leaving
+    localStorage.setItem(`payload_${academicSession}_${academicSemester}`, JSON.stringify(inputs));
+    if (masterData) {
+      localStorage.setItem(`masterTimetableData_${academicSession}_${academicSemester}`, JSON.stringify(masterData));
+    }
+
+    setAcademicSession(val);
+    localStorage.setItem("activeAcademicSession", val);
+
+    // Load inputs
+    const savedForSession = localStorage.getItem(`payload_${val}_${academicSemester}`);
+    if (savedForSession) {
+      try {
+        const parsed = JSON.parse(savedForSession);
+        setInputs(parsed);
+        localStorage.setItem("customMasterPayload", JSON.stringify(parsed));
+      } catch (err) { }
+    } else {
+      const fresh = {
+        ...inputs,
+        yearData: {
+          SY: { ...inputs.yearData?.SY, subjects: [], labCourses: [], practicals: [], fixedSlots: [], offSlots: [] },
+          TY: { ...inputs.yearData?.TY, subjects: [], labCourses: [], practicals: [], fixedSlots: [], offSlots: [] },
+          BTECH: { ...inputs.yearData?.BTECH, subjects: [], labCourses: [], practicals: [], fixedSlots: [], offSlots: [] }
+        }
+      };
+      setInputs(fresh);
+      localStorage.setItem("customMasterPayload", JSON.stringify(fresh));
+    }
+
+    // Load masterData
+    const savedMaster = localStorage.getItem(`masterTimetableData_${val}_${academicSemester}`);
+    if (savedMaster) {
+      try {
+        const parsed = JSON.parse(savedMaster);
+        setMasterData(parsed);
+        localStorage.setItem("masterTimetableData", savedMaster);
+      } catch (e) { }
+    } else {
+      setMasterData(null);
+      localStorage.removeItem("masterTimetableData");
+    }
+  };
+
+  const handleSemesterChange = (val) => {
+    if (academicSemester === val) return;
+
+    // Auto-save current semester's inputs and timetable before leaving
+    localStorage.setItem(`payload_${academicSession}_${academicSemester}`, JSON.stringify(inputs));
+    localStorage.setItem("customMasterPayload", JSON.stringify(inputs));
+    if (masterData) {
+      localStorage.setItem(`masterTimetableData_${academicSession}_${academicSemester}`, JSON.stringify(masterData));
+    }
+
+    setAcademicSemester(val);
+    localStorage.setItem("activeAcademicSemester", val);
+
+    // Load inputs
+    const saved = localStorage.getItem(`payload_${academicSession}_${val}`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setInputs(parsed);
+        localStorage.setItem("customMasterPayload", JSON.stringify(parsed));
+      } catch (e) { }
+    } else {
+      const fresh = {
+        ...inputs,
+        yearData: {
+          SY: { ...inputs.yearData?.SY, subjects: [], labCourses: [], practicals: [], fixedSlots: [], offSlots: [] },
+          TY: { ...inputs.yearData?.TY, subjects: [], labCourses: [], practicals: [], fixedSlots: [], offSlots: [] },
+          BTECH: { ...inputs.yearData?.BTECH, subjects: [], labCourses: [], practicals: [], fixedSlots: [], offSlots: [] }
+        }
+      };
+      setInputs(fresh);
+      localStorage.setItem("customMasterPayload", JSON.stringify(fresh));
+    }
+
+    // Load masterData
+    const savedMaster = localStorage.getItem(`masterTimetableData_${academicSession}_${val}`);
+    if (savedMaster) {
+      try {
+        const parsed = JSON.parse(savedMaster);
+        setMasterData(parsed);
+        localStorage.setItem("masterTimetableData", savedMaster);
+      } catch (e) { }
+    } else {
+      setMasterData(null);
+      localStorage.removeItem("masterTimetableData");
     }
   };
 
@@ -1914,7 +2065,7 @@ function MasterTimetable() {
     }
     const code = newLabCode.trim().toUpperCase();
     const currentLabCourses = inputs.yearData[labCourseYear]?.labCourses || [];
-    if (currentLabCourses.some((c) => c.code === code)) {
+    if (currentLabCourses.some((c) => c.code === code || c.code.startsWith(`${code}-S`))) {
       alert(`Lab course ${code} already exists for ${labCourseYear}!`);
       return;
     }
@@ -1927,27 +2078,40 @@ function MasterTimetable() {
       finalBatchMap[batch] = newLabBatchMap[batch] || effectiveFaculties[idx % effectiveFaculties.length];
     });
 
-    const newCourse = {
-      code,
-      name: newLabName.trim() || `${code} Lab`,
-      faculty: effectiveFaculties[0],
-      faculties: effectiveFaculties,
-      batchFacultyMap: finalBatchMap,
-      preferredRoom: newLabRoom
-    };
+    const numSlots = (Number(newLabContactHours) || 2) / 2;
+    const newCoursesToInsert = [];
+
+    for (let i = 0; i < numSlots; i++) {
+      const slotCode = numSlots > 1 ? `${code}-S${i + 1}` : code;
+      const slotName = numSlots > 1
+        ? `${newLabName.trim() || `${code} Lab`} (Slot ${i + 1})`
+        : (newLabName.trim() || `${code} Lab`);
+
+      newCoursesToInsert.push({
+        code: slotCode,
+        name: slotName,
+        faculty: effectiveFaculties[0],
+        faculties: effectiveFaculties,
+        batchFacultyMap: finalBatchMap,
+        preferredRoom: newLabRoom,
+        contactHours: 2
+      });
+    }
+
     const updated = {
       ...inputs,
       yearData: {
         ...inputs.yearData,
         [labCourseYear]: {
           ...inputs.yearData[labCourseYear],
-          labCourses: [...currentLabCourses, newCourse]
+          labCourses: [...currentLabCourses, ...newCoursesToInsert]
         }
       }
     };
     setInputs(updated);
     setNewLabCode("");
     setNewLabName("");
+    setNewLabContactHours("2");
     setNewLabFaculty("");
     setNewLabFaculties([]);
     setNewLabBatchMap({ I1: "", I2: "", I3: "", I4: "" });
@@ -2597,8 +2761,8 @@ function MasterTimetable() {
       // 5. Sync to backend database if timetable is generated
       if (masterData) {
         try {
-          saveMasterTimetable(masterData, `Department Timetable Saved (${formattedDate})`).catch(() => {});
-        } catch (e) {}
+          saveMasterTimetable(masterData, `Department Timetable Saved (${formattedDate})`).catch(() => { });
+        } catch (e) { }
       }
 
       setSaveStatusMessage({
@@ -2784,8 +2948,8 @@ function MasterTimetable() {
       return { valid: false, reason: `Can only swap slots within the same class (${source.year})` };
     }
 
-    const isTwoHr = isPracticalInBlock(source.year, source.day, source.period) || 
-                    isPracticalInBlock(target.year, target.day, target.period);
+    const isTwoHr = isPracticalInBlock(source.year, source.day, source.period) ||
+      isPracticalInBlock(target.year, target.day, target.period);
 
     if (isTwoHr) {
       const [s1, s2] = getBlockPeriods(source.period);
@@ -2981,8 +3145,8 @@ function MasterTimetable() {
 
     const yr = source.year;
     const currentList = masterData.schedules[yr] || [];
-    const isTwoHr = isPracticalInBlock(source.year, source.day, source.period) || 
-                    isPracticalInBlock(target.year, target.day, target.period);
+    const isTwoHr = isPracticalInBlock(source.year, source.day, source.period) ||
+      isPracticalInBlock(target.year, target.day, target.period);
 
     // Save snapshot of current schedules and inputs before applying swap for step-by-step (1-by-1) revert
     const prevSnapshot = {
@@ -3737,8 +3901,8 @@ function MasterTimetable() {
           : `Selected ${year} [${cell?.course && cell.course !== "—" ? cell.course : "Empty"} on ${day} Period ${period}]. Now click target slot in ${year} to swap.`
       });
     } else {
-      const isTwoHr = isPracticalInBlock(swapSource.year, swapSource.day, swapSource.period) || 
-                      isPracticalInBlock(year, day, period);
+      const isTwoHr = isPracticalInBlock(swapSource.year, swapSource.day, swapSource.period) ||
+        isPracticalInBlock(year, day, period);
       if (isTwoHr) {
         const [s1] = getBlockPeriods(swapSource.period);
         const [t1] = getBlockPeriods(period);
@@ -3762,8 +3926,8 @@ function MasterTimetable() {
 
   const handleCellMouseEnter = (year, day, period, cell) => {
     if (swapModeEnabled && swapSource && swapSource.year === year) {
-      const isTwoHr = isPracticalInBlock(swapSource.year, swapSource.day, swapSource.period) || 
-                      isPracticalInBlock(year, day, period);
+      const isTwoHr = isPracticalInBlock(swapSource.year, swapSource.day, swapSource.period) ||
+        isPracticalInBlock(year, day, period);
       if (isTwoHr) {
         const [s1] = getBlockPeriods(swapSource.period);
         const [t1] = getBlockPeriods(period);
@@ -3811,7 +3975,7 @@ function MasterTimetable() {
     // Check if cell is in hovered target block
     if (swapSource && swapSource.year === year && swapHover && swapHover.year === year && swapHover.day === day) {
       const isTwoHr = isPracticalInBlock(swapSource.year, swapSource.day, swapSource.period) ||
-                      isPracticalInBlock(swapHover.year, swapHover.day, swapHover.period);
+        isPracticalInBlock(swapHover.year, swapHover.day, swapHover.period);
       if (isTwoHr) {
         const [t1, t2] = getBlockPeriods(swapHover.period);
         if (period === t1 || period === t2) {
@@ -3858,7 +4022,7 @@ function MasterTimetable() {
         return `Cannot swap across classes (Current source is ${swapSource.year})`;
       }
       const isTwoHr = isPracticalInBlock(swapSource.year, swapSource.day, swapSource.period) ||
-                      isPracticalInBlock(year, day, period);
+        isPracticalInBlock(year, day, period);
       if (isTwoHr) {
         const [s1] = getBlockPeriods(swapSource.period);
         const [t1] = getBlockPeriods(period);
@@ -3943,6 +4107,40 @@ function MasterTimetable() {
     return isStartOfTwoHourPractical(year, day, period - 1);
   };
 
+  const getCellConflicts = (year, day, period, cell) => {
+    if (!conflictLog || conflictLog.length === 0 || !cell) return [];
+    const dayPeriodStr = `at ${day} P${period}:`;
+    return conflictLog.filter(c => {
+      if (!c.includes(dayPeriodStr)) return false;
+      let isMatch = false;
+      if (cell.faculty) {
+        const facs = cell.faculty.split(/[/,\s]+/).map(f => f.trim().toUpperCase()).filter(Boolean);
+        if (facs.some(f => c.includes(f))) isMatch = true;
+      }
+      if (cell.location) {
+        const locs = cell.location.split(/[/,\s]+/).map(r => r.trim().toUpperCase()).filter(Boolean);
+        if (locs.some(l => c.includes(l))) isMatch = true;
+      }
+      if (cell.subEntries) {
+        if (cell.subEntries.some(sub => {
+          let subMatch = false;
+          if (sub.faculty) {
+            const facs = sub.faculty.split(/[/,\s]+/).map(f => f.trim().toUpperCase()).filter(Boolean);
+            if (facs.some(f => c.includes(f))) subMatch = true;
+          }
+          if (sub.location) {
+            const locs = sub.location.split(/[/,\s]+/).map(r => r.trim().toUpperCase()).filter(Boolean);
+            if (locs.some(l => c.includes(l))) subMatch = true;
+          }
+          return subMatch;
+        })) {
+          isMatch = true;
+        }
+      }
+      return isMatch;
+    });
+  };
+
   const renderYearSlot = (year, day, period, cell) => {
     if (isEndOfTwoHourPractical(year, day, period)) {
       return null;
@@ -3955,7 +4153,13 @@ function MasterTimetable() {
         : swapSource.period === period
     );
     const swapStyle = getCellSwapStyle(year, day, period);
-    const tooltip = getCellTooltip(year, day, period, cell);
+
+    const cellConflicts = getCellConflicts(year, day, period, cell);
+    const hasConflict = cellConflicts.length > 0;
+    const conflictStyle = hasConflict ? { border: "2px solid #ef4444", boxShadow: "inset 0 0 8px rgba(239, 68, 68, 0.4)", backgroundColor: "#fee2e2" } : {};
+
+    const baseTooltip = getCellTooltip(year, day, period, cell);
+    const tooltip = hasConflict ? `⚠️ CONFLICTS:\n${cellConflicts.join("\n")}\n\n${baseTooltip}` : baseTooltip;
 
     if (cell?.subEntries && cell.subEntries.length > 0) {
       return (
@@ -3965,8 +4169,9 @@ function MasterTimetable() {
           className={`master-cell ${getCellBadgeClass(cell)} ${isTwoHr ? "two-hr-practical-cell" : ""}`}
           style={{
             ...swapStyle,
-            background: isTwoHr ? "#f0fdf4" : undefined,
-            borderLeft: isTwoHr ? "4px solid #16a34a" : undefined
+            ...conflictStyle,
+            background: hasConflict ? "#fee2e2" : (isTwoHr ? "#f0fdf4" : undefined),
+            borderLeft: isTwoHr ? "4px solid #16a34a" : (hasConflict ? "2px solid #ef4444" : undefined)
           }}
           onClick={() => handleCellClick(year, day, period, cell)}
           onMouseEnter={() => handleCellMouseEnter(year, day, period, cell)}
@@ -3995,7 +4200,7 @@ function MasterTimetable() {
       <>
         <td
           className={`master-cell ${getCellBadgeClass(cell)}`}
-          style={swapStyle}
+          style={{ ...swapStyle, ...conflictStyle }}
           onClick={() => handleCellClick(year, day, period, cell)}
           onMouseEnter={() => handleCellMouseEnter(year, day, period, cell)}
           onMouseLeave={handleCellMouseLeave}
@@ -4010,7 +4215,7 @@ function MasterTimetable() {
         </td>
         <td
           className="fac-cell"
-          style={swapStyle}
+          style={{ ...swapStyle, ...conflictStyle }}
           onClick={() => handleCellClick(year, day, period, cell)}
           onMouseEnter={() => handleCellMouseEnter(year, day, period, cell)}
           onMouseLeave={handleCellMouseLeave}
@@ -4020,7 +4225,7 @@ function MasterTimetable() {
         </td>
         <td
           className="loc-cell"
-          style={swapStyle}
+          style={{ ...swapStyle, ...conflictStyle }}
           onClick={() => handleCellClick(year, day, period, cell)}
           onMouseEnter={() => handleCellMouseEnter(year, day, period, cell)}
           onMouseLeave={handleCellMouseLeave}
@@ -4047,6 +4252,22 @@ function MasterTimetable() {
   };
 
   const getClassCoordinator = (year) => {
+    if (inputs?.faculties) {
+      const match = inputs.faculties.find(f => {
+        if (!f.role) return false;
+        const role = f.role.toUpperCase();
+        return role.includes(year) && (
+          role.includes("COORDINATOR") ||
+          role.includes("CORDINATOR") ||
+          role.includes("CO-ORDINATOR") ||
+          role.includes("CLASS TEACHER")
+        );
+      });
+      if (match) {
+        return match.fullName || match.name;
+      }
+    }
+
     if (year === "SY") return "Dr. S. U. Mane";
     if (year === "TY") return "Prof. A. B. Patil";
     if (year === "BTECH") return "Mrs. D. P. Patil";
@@ -4549,7 +4770,7 @@ function MasterTimetable() {
             if (info.s1) {
               return (
                 <Fragment key={day}>
-                  <td style={{ fontWeight: 700, fontSize: "10.5px", width: "4%" }}>{info.s1.year || info.s1.course}</td>
+                  <td style={{ fontWeight: 700, fontSize: "10.5px", width: "4%" }}>{info.s1.year || info.s1.batch || "—"}</td>
                   <td style={{ fontWeight: 700, fontSize: "10.5px", width: "7.5%" }}>{info.s1.course || currentFaculty}</td>
                   <td style={{ fontWeight: 700, fontSize: "10.5px", width: "4.5%" }}>{info.s1.location}</td>
                 </Fragment>
@@ -4581,7 +4802,7 @@ function MasterTimetable() {
             if (info.s2) {
               return (
                 <Fragment key={day}>
-                  <td style={{ fontWeight: 700, fontSize: "10.5px", width: "4%" }}>{info.s2.year || info.s2.course}</td>
+                  <td style={{ fontWeight: 700, fontSize: "10.5px", width: "4%" }}>{info.s2.year || info.s2.batch || "—"}</td>
                   <td style={{ fontWeight: 700, fontSize: "10.5px", width: "7.5%" }}>{info.s2.course || currentFaculty}</td>
                   <td style={{ fontWeight: 700, fontSize: "10.5px", width: "4.5%" }}>{info.s2.location}</td>
                 </Fragment>
@@ -4648,75 +4869,45 @@ function MasterTimetable() {
     const courses = [];
     const seenCourses = new Set();
 
-    if (year === "SY") {
-      const syBenchmarkCourses = [
-        { abbr: "DM", name: "Discrete Mathematics" },
-        { abbr: "DS", name: "Data Structures" },
-        { abbr: "COA", name: "Digital Logic and Computer Organization" },
-        { abbr: "MDM-I", name: "MDM-I (Data Structures)" },
-        { abbr: "EVS", name: "Environmental Science" },
-        { abbr: "OOPJ", name: "Object Oriented Programming with Java Lab" },
-        { abbr: "DS", name: "Data Structures Lab" },
-        { abbr: "ITTT", name: "IT Tools and Technologies Lab" }
-      ];
-      syBenchmarkCourses.forEach((c) => courses.push(c));
-    } else {
-      subjects.forEach((s) => {
-        if (!seenCourses.has(s.code)) {
-          seenCourses.add(s.code);
-          courses.push({ abbr: s.code, name: s.name || courseRefMap[s.code] || s.code });
-        }
-      });
-      labCourses.forEach((lc) => {
-        if (!seenCourses.has(lc.code)) {
-          seenCourses.add(lc.code);
-          courses.push({ abbr: lc.code, name: lc.name || `${lc.code} Lab` });
-        }
-      });
-      fixedSlots.forEach((fs) => {
-        const code = (fs.courseName || "").split(/[-/]/)[0].trim();
-        if (code && !seenCourses.has(code) && code !== "Language" && code !== "PSD") {
-          seenCourses.add(code);
-          courses.push({ abbr: code, name: fs.courseName });
-        }
-      });
-    }
+    subjects.forEach((s) => {
+      if (!seenCourses.has(s.code)) {
+        seenCourses.add(s.code);
+        courses.push({ abbr: s.code, name: s.name || courseRefMap[s.code] || s.code });
+      }
+    });
+    labCourses.forEach((lc) => {
+      if (!seenCourses.has(lc.code)) {
+        seenCourses.add(lc.code);
+        courses.push({ abbr: lc.code, name: lc.name || `${lc.code} Lab` });
+      }
+    });
+    fixedSlots.forEach((fs) => {
+      const code = (fs.courseName || "").split(/[-/]/)[0].trim();
+      if (code && !seenCourses.has(code) && code !== "Language" && code !== "PSD") {
+        seenCourses.add(code);
+        courses.push({ abbr: code, name: fs.courseName });
+      }
+    });
 
     const teachers = [];
     const seenTeachers = new Set();
 
-    if (year === "SY") {
-      const syBenchmarkTeachers = [
-        { abbr: "ACA", name: "Mr.Dr.A.C.Adamuthe" },
-        { abbr: "DSB", name: "Dr.d.s.bHOSALE" },
-        { abbr: "SPP", name: "Mrs.S.P.Patil" },
-        { abbr: "PTS", name: "Prof. P. T. Sawant" },
-        { abbr: "DTM", name: "Prof. D. T. Mane" },
-        { abbr: "MNM", name: "Prof. M. N. Mulla(TPC)" },
-        { abbr: "ANM", name: "Mrs.Dr.A.N.Mandale" },
-        { abbr: "RSP", name: "Mrs. R.S. Patil" },
-        { abbr: "VUP", name: "Mrs. V.U. Patil" },
-        { abbr: "TNK", name: "Ms.T.N.Kamble" },
-        { abbr: "SJ", name: "Ms.S.P.Shinde" },
-        { abbr: "PSP", name: "Mrs.P.S.Patil" }
-      ];
-      syBenchmarkTeachers.forEach((t) => teachers.push(t));
-    } else {
-      const addTeacher = (code) => {
-        if (!code) return;
-        code.split(/[/,\s]+/).forEach((c) => {
-          const clean = c.trim().toUpperCase();
-          if (clean && !seenTeachers.has(clean)) {
-            seenTeachers.add(clean);
-            const fullName = teacherRefMap[clean] || getFacultyFullName(clean) || clean;
-            teachers.push({ abbr: clean, name: fullName });
-          }
-        });
-      };
-      subjects.forEach((s) => addTeacher(s.faculty?.name));
-      practicals.forEach((p) => addTeacher(p.faculty));
-      fixedSlots.forEach((f) => addTeacher(f.facultyName));
-    }
+    const addTeacher = (code) => {
+      if (!code) return;
+      code.split(/[/,\s-]+/).forEach((c) => {
+        const clean = c.trim().toUpperCase();
+        // Filter out typical lab batches (I1, I2, T1, B2, etc.) so they aren't listed as teachers
+        const isBatch = /^[A-Z]\d$/.test(clean) || clean === "DIVA" || clean === "DIVB";
+        if (clean && !isBatch && !seenTeachers.has(clean) && clean !== "—") {
+          seenTeachers.add(clean);
+          const fullName = teacherRefMap[clean] || getFacultyFullName(clean) || clean;
+          teachers.push({ abbr: clean, name: fullName });
+        }
+      });
+    };
+    subjects.forEach((s) => addTeacher(s.faculty?.name));
+    practicals.forEach((p) => addTeacher(p.faculty));
+    fixedSlots.forEach((f) => addTeacher(f.facultyName));
 
     return { courses, teachers };
   };
@@ -4774,19 +4965,26 @@ function MasterTimetable() {
 
             if (info.isTwoHrPrac) {
               const entries = info.c1?.subEntries && info.c1.subEntries.length > 0 ? info.c1.subEntries : (info.c2?.subEntries || []);
+
+              // Pad to at least 4 entries so the inner table fills the rowspan cleanly
+              const paddedEntries = [...entries];
+              while (paddedEntries.length < 4) {
+                paddedEntries.push({ batch: "", course: "", faculty: "", location: "" });
+              }
+
               return (
                 <td key={day} colSpan="3" rowSpan="2" style={{ padding: 0, verticalAlign: "middle", height: "100%" }}>
-                  <table style={{ width: "100%", height: "100%", borderCollapse: "collapse", margin: 0, fontSize: "10.5px" }}>
+                  <table style={{ width: "100%", height: "100%", borderCollapse: "collapse", margin: 0 }}>
                     <tbody>
-                      {entries.map((b, bIdx) => (
-                        <tr key={bIdx} style={{ borderBottom: bIdx < entries.length - 1 ? "1px solid #000" : "none" }}>
-                          <td style={{ width: "42%", padding: "2px 4px", fontWeight: 700, textAlign: "left", whiteSpace: "nowrap" }}>
+                      {paddedEntries.map((b, bIdx) => (
+                        <tr key={bIdx} style={{ borderBottom: bIdx < paddedEntries.length - 1 ? "1px solid #000" : "none" }}>
+                          <td style={{ width: "42%", padding: "2px 4px", fontWeight: 700, fontSize: "12px", color: "#000000", textAlign: "left", whiteSpace: "nowrap", border: "none" }}>
                             {b.batch ? `${b.batch} -${b.course}` : b.course}
                           </td>
-                          <td style={{ width: "28%", padding: "2px 4px", fontWeight: 700, textAlign: "center", borderLeft: "1px solid #000", borderRight: "1px solid #000" }}>
+                          <td style={{ width: "28%", padding: "2px 4px", fontWeight: 700, fontSize: "12px", color: "#000000", textAlign: "center", border: "none", borderLeft: "1px solid #000", borderRight: "1px solid #000" }}>
                             {b.faculty}
                           </td>
-                          <td style={{ width: "30%", padding: "2px 4px", fontWeight: 600, textAlign: "center" }}>
+                          <td style={{ width: "30%", padding: "2px 4px", fontWeight: 700, fontSize: "12px", color: "#000000", textAlign: "center", border: "none" }}>
                             {b.location}
                           </td>
                         </tr>
@@ -4809,7 +5007,7 @@ function MasterTimetable() {
             if (info.isWide1) {
               const isMDM = (info.c1?.course || "").includes("MDM");
               return (
-                <td key={day} colSpan="3" style={{ background: isMDM ? "#93c5fd" : "#ffffff", fontWeight: 700, fontSize: "10.5px", padding: "4px", textAlign: "center", verticalAlign: "middle" }}>
+                <td key={day} colSpan="3" style={{ background: isMDM ? "#93c5fd" : "#ffffff", fontWeight: 700, fontSize: "12px", color: "#000000", padding: "4px", textAlign: "center", verticalAlign: "middle" }}>
                   {info.c1?.course}
                 </td>
               );
@@ -4818,9 +5016,9 @@ function MasterTimetable() {
             if (info.c1 && info.c1.course && info.c1.course !== "—") {
               return (
                 <Fragment key={day}>
-                  <td style={{ fontWeight: 700, fontSize: "11px", width: "4.5%", verticalAlign: "middle" }}>{info.c1.course}</td>
-                  <td style={{ fontWeight: 700, fontSize: "11px", width: "4%", verticalAlign: "middle" }}>{info.c1.faculty}</td>
-                  <td style={{ fontWeight: 600, fontSize: "10.5px", width: "4%", verticalAlign: "middle" }}>{info.c1.location}</td>
+                  <td style={{ fontWeight: 700, fontSize: "12px", color: "#000000", width: "4.5%", verticalAlign: "middle" }}>{info.c1.course}</td>
+                  <td style={{ fontWeight: 700, fontSize: "12px", color: "#000000", width: "4%", verticalAlign: "middle" }}>{info.c1.faculty}</td>
+                  <td style={{ fontWeight: 700, fontSize: "12px", color: "#000000", width: "4%", verticalAlign: "middle" }}>{info.c1.location}</td>
                 </Fragment>
               );
             }
@@ -4862,7 +5060,7 @@ function MasterTimetable() {
             if (info.isWide2) {
               const isMDM = (info.c2?.course || "").includes("MDM");
               return (
-                <td key={day} colSpan="3" style={{ background: isMDM ? "#93c5fd" : "#ffffff", fontWeight: 700, fontSize: "10.5px", padding: "4px", textAlign: "center", verticalAlign: "middle" }}>
+                <td key={day} colSpan="3" style={{ background: isMDM ? "#93c5fd" : "#ffffff", fontWeight: 700, fontSize: "12px", color: "#000000", padding: "4px", textAlign: "center", verticalAlign: "middle" }}>
                   {info.c2?.course}
                 </td>
               );
@@ -4871,9 +5069,9 @@ function MasterTimetable() {
             if (info.c2 && info.c2.course && info.c2.course !== "—") {
               return (
                 <Fragment key={day}>
-                  <td style={{ fontWeight: 700, fontSize: "11px", width: "4.5%", verticalAlign: "middle" }}>{info.c2.course}</td>
-                  <td style={{ fontWeight: 700, fontSize: "11px", width: "4%", verticalAlign: "middle" }}>{info.c2.faculty}</td>
-                  <td style={{ fontWeight: 600, fontSize: "10.5px", width: "4%", verticalAlign: "middle" }}>{info.c2.location}</td>
+                  <td style={{ fontWeight: 700, fontSize: "12px", color: "#000000", width: "4.5%", verticalAlign: "middle" }}>{info.c2.course}</td>
+                  <td style={{ fontWeight: 700, fontSize: "12px", color: "#000000", width: "4%", verticalAlign: "middle" }}>{info.c2.faculty}</td>
+                  <td style={{ fontWeight: 700, fontSize: "12px", color: "#000000", width: "4%", verticalAlign: "middle" }}>{info.c2.location}</td>
                 </Fragment>
               );
             }
@@ -5045,40 +5243,116 @@ function MasterTimetable() {
 
   return (
     <div className="master-timetable-page">
-      {/* Dynamic View Title Card */}
-      <div className="master-header-card" style={(selectedView === "ALL" || selectedView === "CLASS_MASTER") ? { display: "flex", justifyContent: "center", alignItems: "center", textAlign: "center", padding: "16px" } : {}}>
-        {(selectedView === "ALL" || selectedView === "CLASS_MASTER") ? (
-          <div style={{ textAlign: "center", width: "100%" }}>
-            <div style={{ fontSize: "14px", fontWeight: 700, letterSpacing: "0.5px", color: "#1e3a8a" }}>K.E.Society's</div>
-            <div style={{ fontSize: "16.5px", fontWeight: 800, marginTop: "3px", color: "#0f172a" }}>Rajarambapu Institute of Technology ,Rajaramnagar</div>
-            <div style={{ fontSize: "14.5px", fontWeight: 700, marginTop: "3px", textDecoration: "underline", color: "#1e3a8a" }}>Department of Information Technology</div>
-            <div style={{ fontSize: "15px", fontWeight: 800, marginTop: "3px", textDecoration: "underline", color: "#0f172a" }}>Master Class Time Table</div>
-            <div style={{ fontSize: "13.5px", fontWeight: 700, marginTop: "3px", color: "#2563eb" }}>{academicSession}/ {academicSemester}</div>
-          </div>
-        ) : (
-          <>
-            <div className="header-card-left">
-              <h2 className="header-view-title">
-                {selectedView === "CLASS" && `${selectedClassYear === "SY" ? "Second Year (S.Y. B.Tech) - Sem-III" : (selectedClassYear === "TY" ? "Third Year (T.Y. B.Tech) - Sem-V" : "Final Year (B.Tech) - Sem-VII")} Timetable`}
-                {selectedView === "LOAD_SHEET" && "Total Staff Load Sheet - Department Workload Allocation"}
-                {selectedView === "FACULTY_MASTER" && "Master Personal Faculty Time Table (Synchronized Matrix)"}
-                {selectedView === "FACULTY" && `Personal Faculty Schedule: ${getFacultyFullName(selectedFaculty)} (${selectedFaculty})`}
-                {selectedView === "ROOM_MASTER" && "Master Classroom Time Table (All Theory Lecture Halls)"}
-                {selectedView === "ROOM" && `Personal Classroom Schedule: ${selectedRoom}`}
-                {(selectedView === "LAB" || selectedView === "LAB_MASTER") && `Laboratory Schedule: ${selectedLab === "ALL" || selectedView === "LAB_MASTER" ? "Lab Master Time Table (All Labs Overview)" : `Lab Personal Time Table (${selectedLab})`}`}
-              </h2>
-              <div className="header-sub-info">
-                <span>Department of Information Technology</span>
-                <span className="dot-sep">•</span>
-                <span>Rajarambapu Institute of Technology</span>
+      <style>{`
+        @media screen {
+          .hide-on-screen { display: none !important; }
+        }
+        @media print {
+          .hide-on-print { display: none !important; }
+          .force-print-center { display: flex !important; flex-direction: column !important; justify-content: center !important; align-items: center !important; text-align: center !important; width: 100% !important; margin: 0 auto !important; }
+        }
+      `}</style>
+
+      {!showInputManager && (
+        <>
+          {/* Dynamic View Title Card */}
+          <div className="master-header-card" style={{ padding: "16px", display: "flex", flexWrap: "wrap" }}>
+
+            {/* Centered Heading (Always Print, Screen only if ALL/CLASS_MASTER) */}
+            <div
+              className={(selectedView === "ALL" || selectedView === "CLASS_MASTER") ? "force-print-center hide-master-header-in-print" : "hide-on-screen hide-on-print"}
+              style={(selectedView === "ALL" || selectedView === "CLASS_MASTER") ? { display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", width: "100%" } : {}}
+            >
+              <div style={{ fontSize: "14px", fontWeight: 700, letterSpacing: "0.5px", color: "#1e3a8a" }}>K.E.Society's</div>
+              <div style={{ fontSize: "16.5px", fontWeight: 800, marginTop: "3px", color: "#0f172a" }}>Rajarambapu Institute of Technology ,Rajaramnagar</div>
+              <div style={{ fontSize: "14.5px", fontWeight: 700, marginTop: "3px", textDecoration: "underline", color: "#1e3a8a" }}>Department of Information Technology</div>
+              <div style={{ fontSize: "15px", fontWeight: 800, marginTop: "3px", textDecoration: "underline", color: "#0f172a" }}>
+                {selectedView === "ALL" || selectedView === "CLASS_MASTER" ? "Master Class Time Table" : (
+                  selectedView === "CLASS" ? `${selectedClassYear === "SY" ? "Second Year (S.Y. B.Tech)" : (selectedClassYear === "TY" ? "Third Year (T.Y. B.Tech)" : "Final Year (B.Tech)")} Timetable` :
+                    selectedView === "LOAD_SHEET" ? "Total Staff Load Sheet" :
+                      selectedView === "FACULTY_MASTER" ? "Master Personal Faculty Time Table" :
+                        selectedView === "FACULTY" ? `Personal Faculty Schedule: ${getFacultyFullName(selectedFaculty)}` :
+                          selectedView === "ROOM_MASTER" ? "Master Classroom Time Table" :
+                            selectedView === "ROOM" ? `Personal Classroom Schedule: ${selectedRoom}` :
+                              (selectedView === "LAB" || selectedView === "LAB_MASTER") ? `Laboratory Schedule${selectedLab !== "ALL" ? ` (${selectedLab})` : ""}` :
+                                "Master Class Time Table")}
               </div>
+              <div style={{ fontSize: "13.5px", fontWeight: 700, marginTop: "3px", color: "#2563eb" }}>{academicSession}/ {academicSemester}</div>
             </div>
-            <div className="header-card-right no-print">
-              <span className="badge-dept">IT Department</span>
+
+            {/* Alternative Heading (Screen only, for specific views) */}
+            {!(selectedView === "ALL" || selectedView === "CLASS_MASTER") && (
+              <div className="hide-on-print" style={{ display: "flex", alignItems: "center", position: "relative", width: "100%", padding: "5px 0" }}>
+                <div style={{ position: "absolute", left: 0, display: "flex", alignItems: "center" }}>
+                  <img src="/rit-logo.png" alt="RIT Logo" style={{ height: "45px", objectFit: "contain" }} />
+                </div>
+                <div style={{ flex: 1, textAlign: "center" }}>
+                  <h2 className="header-view-title" style={{ margin: 0, display: "inline-block" }}>
+                    {selectedView === "CLASS" && `${selectedClassYear === "SY" ? "Second Year (S.Y. B.Tech) - Sem-III" : (selectedClassYear === "TY" ? "Third Year (T.Y. B.Tech) - Sem-V" : "Final Year (B.Tech) - Sem-VII")} Timetable`}
+                    {selectedView === "LOAD_SHEET" && "Total Staff Load Sheet - Department Workload Allocation"}
+                    {selectedView === "FACULTY_MASTER" && "Master Personal Faculty Time Table (Synchronized Matrix)"}
+                    {selectedView === "FACULTY" && `Personal Faculty Schedule: ${getFacultyFullName(selectedFaculty)} (${selectedFaculty})`}
+                    {selectedView === "ROOM_MASTER" && "Master Classroom Time Table"}
+                    {selectedView === "ROOM" && `Personal Classroom Schedule: ${selectedRoom}`}
+                    {(selectedView === "LAB" || selectedView === "LAB_MASTER") && `Laboratory Schedule: ${selectedLab === "ALL" || selectedView === "LAB_MASTER" ? "Lab Master Time Table (All Labs Overview)" : `Lab Personal Time Table (${selectedLab})`}`}
+                  </h2>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Global Academic Term Selector */}
+          <div className="no-print" style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "10px", padding: "10px 16px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", marginBottom: "12px", borderRadius: "0 0 8px 8px" }}>
+            <select
+              value={academicSession}
+              onChange={(e) => handleSessionChange(e.target.value)}
+              style={{ padding: "5px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: 700 }}
+              title="Select Academic Session"
+            >
+              <option value="2026-27">Session 2026-27</option>
+              <option value="2025-26">Session 2025-26</option>
+              <option value="2024-25">Session 2024-25</option>
+              <option value="2023-24">Session 2023-24</option>
+            </select>
+            <div style={{ display: "flex", gap: "4px" }}>
+              <button
+                type="button"
+                onClick={() => handleSemesterChange("PART-I")}
+                style={{
+                  padding: "5px 12px",
+                  borderRadius: "6px",
+                  border: academicSemester === "PART-I" ? "2px solid #0284c7" : "1px solid #cbd5e1",
+                  background: academicSemester === "PART-I" ? "#0284c7" : "white",
+                  color: academicSemester === "PART-I" ? "white" : "#334155",
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  boxShadow: academicSemester === "PART-I" ? "0 2px 4px rgba(2,132,199,0.2)" : "none"
+                }}
+              >
+                Odd Sem (PART-I)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSemesterChange("PART-II")}
+                style={{
+                  padding: "5px 12px",
+                  borderRadius: "6px",
+                  border: academicSemester === "PART-II" ? "2px solid #0284c7" : "1px solid #cbd5e1",
+                  background: academicSemester === "PART-II" ? "#0284c7" : "white",
+                  color: academicSemester === "PART-II" ? "white" : "#334155",
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  boxShadow: academicSemester === "PART-II" ? "0 2px 4px rgba(2,132,199,0.2)" : "none"
+                }}
+              >
+                Even Sem (PART-II)
+              </button>
             </div>
-          </>
-        )}
-      </div>
+          </div>
+        </>
+      )}
 
       {/* Save Status / Feedback Toast Banner */}
       {saveStatusMessage && (
@@ -5109,409 +5383,140 @@ function MasterTimetable() {
 
 
 
-      {/* Control Actions Bar */}
-      <div className="master-actions-bar no-print">
-        <div className="view-selector">
-          <button
-            className={`view-btn ${selectedView === "ALL" ? "active" : ""}`}
-            onClick={() => setSelectedView("ALL")}
-          >
-            📋 Master Department View
-          </button>
-          <button
-            className={`view-btn ${selectedView === "CLASS" ? "active" : ""}`}
-            onClick={() => setSelectedView("CLASS")}
-          >
-            🎓 Student Class Views
-          </button>
-          <button
-            className={`view-btn ${selectedView === "FACULTY" ? "active" : ""}`}
-            onClick={() => setSelectedView("FACULTY")}
-          >
-            👨‍🏫 Faculty Personal Timetables
-          </button>
-          <button
-            className={`view-btn ${selectedView === "LAB" ? "active" : ""}`}
-            onClick={() => setSelectedView("LAB")}
-          >
-            🔬 Computer Lab Occupancy
-          </button>
-        </div>
+      {/* Floating Action Buttons */}
+      <div className="no-print" style={{
+        position: "fixed",
+        right: "10px",
+        top: "50%",
+        transform: "translateY(-50%)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "15px",
+        zIndex: 9999
+      }}>
+        <button
+          className={`btn-secondary ${swapModeEnabled ? "active" : ""}`}
+          onClick={() => {
+            setSwapModeEnabled(!swapModeEnabled);
+            setSwapSource(null);
+            setSwapHover(null);
+            setSwapAlert(null);
+          }}
+          style={{
+            width: "50px", height: "50px", borderRadius: "50%", padding: 0,
+            display: "flex", justifyContent: "center", alignItems: "center",
+            background: swapModeEnabled ? "#dbeafe" : "#ffffff",
+            borderColor: swapModeEnabled ? "#2563eb" : "#cbd5e1",
+            boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+            fontSize: "20px", cursor: "pointer",
+            border: "2px solid"
+          }}
+          title={swapModeEnabled ? "Exit Swap Mode" : "Period Swap Mode"}
+        >
+          🔄
+        </button>
 
-        <div className="action-buttons">
+        <button
+          onClick={() => {
+            if (!swapModeEnabled) {
+              setSwapAlert({
+                type: "info",
+                text: "💡 In-Place Edit is active! Click any cell in the timetable below to edit Faculty, Room, or practical batches."
+              });
+            }
+          }}
+          style={{
+            width: "50px", height: "50px", borderRadius: "50%", padding: 0,
+            display: "flex", justifyContent: "center", alignItems: "center",
+            background: swapModeEnabled ? "#f1f5f9" : "#dcfce7",
+            borderColor: swapModeEnabled ? "#cbd5e1" : "#166534",
+            border: "2px solid",
+            boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+            fontSize: "20px", cursor: swapModeEnabled ? "not-allowed" : "pointer",
+            opacity: swapModeEnabled ? 0.6 : 1
+          }}
+          title="In-Place Edit Mode (Active when Swap Mode is off)"
+        >
+          ✏️
+        </button>
+
+        {hasManualAdjustments && (
           <button
-            className={`btn-secondary ${swapModeEnabled ? "active" : ""}`}
             onClick={() => {
-              setSwapModeEnabled(!swapModeEnabled);
-              setSwapSource(null);
-              setSwapHover(null);
-              setSwapAlert(null);
-            }}
-            style={{
-              background: swapModeEnabled ? "#dbeafe" : "#ffffff",
-              borderColor: swapModeEnabled ? "#2563eb" : "#cbd5e1",
-              fontWeight: 600,
-              color: swapModeEnabled ? "#1d4ed8" : "#334155"
-            }}
-          >
-            🔄 {swapModeEnabled ? "Exit Swap Mode" : "Period Swap Mode"}
-          </button>
-          {!swapModeEnabled && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                justifyContent: "center",
-                alignItems: "center",
-                textAlign: "center",
-                background: "#f0fdf4",
-                color: "#166534",
-                padding: "8px 16px",
-                borderRadius: "8px",
-                border: "1.5px solid #86efac",
-                minWidth: "220px",
-                boxShadow: "0 1px 2px rgba(22, 163, 74, 0.08)",
-                cursor: "pointer",
-                userSelect: "none"
-              }}
-              onClick={() => {
-                setSwapAlert({
-                  type: "info",
-                  text: "💡 In-Place Edit is active! Click any cell in the timetable below to edit Faculty, Room, or practical batches."
-                });
-              }}
-              title="Click directly on any slot in the timetable below to edit Faculty or Room"
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 700, fontSize: "12px", color: "#15803d", whiteSpace: "nowrap" }}>
-                <span>✏️ In-Place Edit Mode</span>
-                <span style={{ fontSize: "9.5px", background: "#dcfce7", color: "#166534", padding: "1px 5px", borderRadius: "10px", border: "1px solid #bbf7d0", fontWeight: 700 }}>ACTIVE</span>
-              </div>
-              <div style={{ fontSize: "11px", color: "#166534", marginTop: "2px", whiteSpace: "nowrap" }}>
-                Click any slot to change Faculty / Room
-              </div>
-            </div>
-          )}
-          {swapHistory.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "5px",
-                justifyContent: "center",
-                minWidth: "150px"
-              }}
-            >
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={handleUndoSwap}
-                style={{
-                  background: "#fef3c7",
-                  borderColor: "#f59e0b",
-                  color: "#92400e",
-                  fontWeight: 700,
-                  fontSize: "12px",
-                  padding: swapHistory.length > 1 ? "6px 12px" : "10px 14px",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "6px",
-                  whiteSpace: "nowrap",
-                  flex: swapHistory.length > 1 ? "1" : "initial"
-                }}
-                title={`Revert only the last swap (${swapHistory.length} step${swapHistory.length === 1 ? "" : "s"} recorded)`}
-              >
-                <span>↩ Revert Swap ({swapHistory.length})</span>
-              </button>
-              {swapHistory.length > 1 && (
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={handleRevertAllChanges}
-                  style={{
-                    background: "#fee2e2",
-                    borderColor: "#ef4444",
-                    color: "#991b1b",
-                    fontSize: "11.5px",
-                    fontWeight: 700,
-                    padding: "5px 12px",
-                    borderRadius: "6px",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "5px",
-                    whiteSpace: "nowrap",
-                    flex: "1"
-                  }}
-                  title="Revert all swaps back to original schedule at once"
-                >
-                  <span>✕ Revert All</span>
-                </button>
-              )}
-            </div>
-          )}
-          {/* ONLY 2 ACTION BUTTONS: SAVE AND RESET */}
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => handleSaveAllData(false)}
-            style={{
-              background: "linear-gradient(135deg, #15803d 0%, #16a34a 100%)",
-              borderColor: "#15803d",
-              color: "white",
-              fontWeight: 700,
-              fontSize: "13px",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              boxShadow: "0 2px 6px rgba(22, 163, 74, 0.25)",
-              padding: "8px 18px",
-              borderRadius: "6px",
-              cursor: "pointer"
-            }}
-            title={lastSavedTime ? `Instantly save all current updates. Last saved: ${lastSavedTime}` : "Save all department data, course allotments, and generated timetables"}
-          >
-            💾 Save
-          </button>
-
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => setResetModalOpen(true)}
-            style={{
-              background: "#ffffff",
-              borderColor: "#cbd5e1",
-              color: "#1e293b",
-              fontWeight: 700,
-              fontSize: "13px",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "8px 16px",
-              borderRadius: "6px",
-              cursor: "pointer"
-            }}
-            title="Reset options: Reload from last saved point, Reset to RIT Benchmark Preset, or Reset to Blank Canvas"
-          >
-            🔄 Reset
-          </button>
-
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => setShowInputManager(!showInputManager)}
-            style={{ background: showInputManager ? "#dbeafe" : "#ffffff", borderColor: "#3b82f6" }}
-          >
-            ⚙ {showInputManager ? "Hide Input Manager" : "Manage Department Inputs"}
-          </button>
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => handleGenerate(inputs, false)}
-            disabled={loading}
-            title={hasManualAdjustments ? "Maintains your existing timetable with all period swaps" : "Generate 3-Year Timetable"}
-          >
-            {loading ? "⚡ Generating..." : (hasManualAdjustments ? "⚡ Generate 3-Year Timetable (Keep Swaps)" : "⚡ Generate 3-Year Timetable")}
-          </button>
-          {hasManualAdjustments && (
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => {
-                if (window.confirm("Generate a fresh timetable from scratch? This will discard your current manual period swaps.")) {
-                  handleGenerate(inputs, true);
-                }
-              }}
-              disabled={loading}
-              style={{ fontSize: "11.5px", padding: "6px 10px", color: "#64748b" }}
-              title="Discard manual swaps and regenerate schedule from scratch"
-            >
-              🔄 Fresh Regeneration
-            </button>
-          )}
-          <button
-            className="btn-secondary"
-            onClick={() => window.print()}
-          >
-            🖨 Print / Export PDF
-          </button>
-
-          {/* Quick Excel Export Actions */}
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => {
-              if (selectedView === "CLASS") {
-                handleExportCurrentClassExcel(selectedClassYear);
-              } else if (selectedView === "FACULTY") {
-                const facSched = getFacultySchedule(selectedFaculty);
-                const asgn = getFacultyAssignments(selectedFaculty);
-                const facObj = (inputs.faculties || []).find((f) => f.name === selectedFaculty);
-                exportPersonalTimetableToExcel({
-                  facultyCode: selectedFaculty,
-                  facultyName: getFacultyFullName(selectedFaculty),
-                  designation: facObj?.designation || "Assistant Professor",
-                  centralAuthority: facObj?.centralAuthority || "None",
-                  academicSession,
-                  academicSemester,
-                  facSched,
-                  assignments: asgn
-                });
-              } else {
-                exportMasterDepartmentToExcel({
-                  academicSession,
-                  academicSemester,
-                  masterData,
-                  inputs,
-                  periodTimings
-                });
+              if (window.confirm("Generate a fresh timetable from scratch? This will discard your current manual period swaps.")) {
+                handleGenerate(inputs, true);
               }
             }}
-            disabled={!masterData}
-            title="Export timetable directly as an Excel spreadsheet (.xlsx)"
+            disabled={loading}
             style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              backgroundColor: "#ecfdf5",
-              color: "#065f46",
-              borderColor: "#a7f3d0",
-              fontWeight: 700
+              width: "50px", height: "50px", borderRadius: "50%", padding: 0,
+              display: "flex", justifyContent: "center", alignItems: "center",
+              background: "#fee2e2", borderColor: "#dc2626",
+              border: "2px solid",
+              boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+              fontSize: "20px", cursor: loading ? "wait" : "pointer"
             }}
+            title="Fresh Regeneration"
           >
-            📥 Export to Excel (.xlsx)
+            ✨
           </button>
+        )}
+
+        <button
+          onClick={() => handleGenerate(inputs, false)}
+          disabled={loading}
+          style={{
+            width: "50px", height: "50px", borderRadius: "50%", padding: 0,
+            display: "flex", justifyContent: "center", alignItems: "center",
+            background: "#eff6ff", borderColor: "#3b82f6",
+            border: "2px solid",
+            boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+            fontSize: "20px", cursor: loading ? "wait" : "pointer"
+          }}
+          title={hasManualAdjustments ? "Generate 3-Year Timetable (Keep Swaps)" : "Generate 3-Year Timetable"}
+        >
+          ⚡
+        </button>
+
+        {!readOnlyMode && (
           <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => exportMasterDepartmentToExcel({
-              academicSession,
-              academicSemester,
-              masterData,
-              inputs,
-              periodTimings
-            })}
-            disabled={!masterData}
-            title="Export complete departmental multi-sheet master workbook (SY, TY, BTech, Master, and Staff Load)"
+            onClick={() => setSaveModalOpen(true)}
             style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "5px",
-              backgroundColor: "#f0fdf4",
-              color: "#166534",
-              borderColor: "#bbf7d0",
-              fontWeight: 600,
-              fontSize: "12px"
+              width: "50px", height: "50px", borderRadius: "50%", padding: 0,
+              display: "flex", justifyContent: "center", alignItems: "center",
+              background: "#fef3c7", borderColor: "#fde68a",
+              border: "2px solid",
+              boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+              fontSize: "20px", cursor: "pointer"
             }}
+            title="Save Timetable"
           >
-            📑 Master Workbook (.xlsx)
+            💾
           </button>
-        </div>
+        )}
+
+        <button
+          onClick={() => window.print()}
+          style={{
+            width: "50px", height: "50px", borderRadius: "50%", padding: 0,
+            display: "flex", justifyContent: "center", alignItems: "center",
+            background: "#ffffff", borderColor: "#cbd5e1",
+            border: "2px solid",
+            boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+            fontSize: "20px", cursor: "pointer"
+          }}
+          title="Print / Export PDF"
+        >
+          🖨
+        </button>
       </div>
 
-      {/* Sub-view Selector for Student Class View */}
-      {selectedView === "CLASS" && (
-        <div className="sub-view-bar no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            <span className="sub-view-label">Select Academic Class:</span>
-            <button
-              type="button"
-              className={`sub-view-btn ${selectedClassYear === "SY" ? "active" : ""}`}
-              onClick={() => setSelectedClassYear("SY")}
-            >
-              S.Y. B.Tech — {academicSemester === "PART-I" ? "Sem-III" : "Sem-IV"} (Room {getClassroom("SY")})
-            </button>
-            <button
-              type="button"
-              className={`sub-view-btn ${selectedClassYear === "TY" ? "active" : ""}`}
-              onClick={() => setSelectedClassYear("TY")}
-            >
-              T.Y. B.Tech — {academicSemester === "PART-I" ? "Sem-V" : "Sem-VI"} (Room {getClassroom("TY")})
-            </button>
-            <button
-              type="button"
-              className={`sub-view-btn ${selectedClassYear === "BTECH" ? "active" : ""}`}
-              onClick={() => setSelectedClassYear("BTECH")}
-            >
-              Final Year B.Tech — {academicSemester === "PART-I" ? "Sem-VII" : "Sem-VIII"} (Room {getClassroom("BTECH")})
-            </button>
-          </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            <select
-              value={academicSession}
-              onChange={(e) => setAcademicSession(e.target.value)}
-              style={{ padding: "5px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: 700 }}
-              title="Select Academic Session"
-            >
-              <option value="2026-27">Session 2026-27</option>
-              <option value="2025-26">Session 2025-26</option>
-              <option value="2024-25">Session 2024-25</option>
-              <option value="2023-24">Session 2023-24</option>
-            </select>
-            <select
-              value={academicSemester}
-              onChange={(e) => setAcademicSemester(e.target.value)}
-              style={{ padding: "5px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: 700 }}
-              title="Select Semester Term (PART-I: Odd Sems, PART-II: Even Sems)"
-            >
-              <option value="PART-I">PART-I (Odd: Sem III, V, VII)</option>
-              <option value="PART-II">PART-II (Even: Sem IV, VI, VIII)</option>
-            </select>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => handleExportCurrentClassExcel(selectedClassYear)}
-              disabled={!masterData}
-              style={{
-                fontSize: "12px",
-                padding: "5px 12px",
-                background: "#10b981",
-                color: "white",
-                borderColor: "#059669",
-                fontWeight: 700,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "5px"
-              }}
-              title={`Download ${selectedClassYear} ${getSemesterForYear(selectedClassYear, academicSemester)} Timetable (.xlsx)`}
-            >
-              📥 Download {selectedClassYear} Excel (.xlsx)
-            </button>
-          </div>
-        </div>
-      )}
+
 
       {/* Sub-view Selector for Faculty View */}
       {selectedView === "FACULTY" && (
         <div className="sub-view-bar no-print">
-          <span className="sub-view-label">Select Faculty Member:</span>
-          <select
-            value={selectedFaculty}
-            onChange={(e) => setSelectedFaculty(e.target.value)}
-            style={{
-              padding: "6px 12px",
-              borderRadius: "6px",
-              border: "1px solid #cbd5e1",
-              fontSize: "13px",
-              fontWeight: 600,
-              minWidth: "260px"
-            }}
-          >
-            {(inputs.faculties || []).map((f) => {
-              const asgn = getFacultyAssignments(f.name);
-              const desigStr = f.designation || "Assistant Professor";
-              const authStr = f.centralAuthority && f.centralAuthority !== "None" ? ` - ${f.centralAuthority}` : "";
-              return (
-                <option key={f.name} value={f.name}>
-                  {f.name} - {f.fullName || f.name} [{desigStr}{authStr}] ({asgn.totalHours} hrs/wk · Max: {f.maxDailyLectures || 4}/day)
-                </option>
-              );
-            })}
-          </select>
 
           <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginLeft: "10px" }}>
             {(inputs.faculties || []).map((f) => {
@@ -5612,30 +5617,12 @@ function MasterTimetable() {
 
       {/* Sub-view Selector for Faculty Master View */}
       {selectedView === "FACULTY_MASTER" && (
-        <div className="sub-view-bar no-print">
-          <span className="sub-view-label">Filter By Working Day:</span>
-          {[
-            { id: "ALL", label: "📅 All Working Days (Mon - Fri)" },
-            { id: "MONDAY", label: "Monday" },
-            { id: "TUESDAY", label: "Tuesday" },
-            { id: "WEDNESDAY", label: "Wednesday" },
-            { id: "THURSDAY", label: "Thursday" },
-            { id: "FRIDAY", label: "Friday" }
-          ].map((d) => (
-            <button
-              key={d.id}
-              type="button"
-              className={`sub-view-btn ${facultyMasterDay === d.id ? "active" : ""}`}
-              onClick={() => setFacultyMasterDay(d.id)}
-            >
-              {d.label}
-            </button>
-          ))}
+        <div className="sub-view-bar no-print" style={{ justifyContent: "flex-end" }}>
           <button
             type="button"
             className="btn-secondary no-print"
             onClick={() => window.print()}
-            style={{ marginLeft: "auto", padding: "4px 10px", fontSize: "12px" }}
+            style={{ padding: "4px 10px", fontSize: "12px" }}
           >
             🖨️ Print Master Sheet
           </button>
@@ -5752,88 +5739,8 @@ function MasterTimetable() {
           marginBottom: "20px",
           boxShadow: "0 4px 15px rgba(0,0,0,0.08)"
         }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px", flexWrap: "wrap", gap: "10px" }}>
-            <h3 style={{ margin: 0, color: "#1e3a8a" }}>
-              🛠 Department Data Inputs: Configure All 3 Years Without Conflicts
-            </h3>
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <button
-                type="button"
-                onClick={handleExportJson}
-                className="btn-secondary"
-                style={{ fontSize: "12px", padding: "6px 12px" }}
-                title="Backup complete department configuration to a JSON file"
-              >
-                📥 Export JSON
-              </button>
-              <label
-                className="btn-secondary"
-                style={{ fontSize: "12px", padding: "6px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center" }}
-                title="Load department configuration from JSON file"
-              >
-                📤 Import JSON
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={handleImportJson}
-                  style={{ display: "none" }}
-                />
-              </label>
-              <button
-                type="button"
-                onClick={handleResetToPreset}
-                className="btn-secondary"
-                style={{ fontSize: "12px", padding: "6px 12px" }}
-                title="Reset back to RIT Department Benchmark configuration"
-              >
-                🔄 Reset to RIT Preset
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setNewYearSetupSession(academicSession);
-                  setNewYearSetupSemester(academicSemester);
-                  setNewYearSetupScope("ALL");
-                  setNewYearModalOpen(true);
-                }}
-                className="btn-secondary"
-                style={{
-                  fontSize: "12px",
-                  padding: "6px 12px",
-                  background: "#f0fdf4",
-                  color: "#166534",
-                  borderColor: "#86efac",
-                  fontWeight: 700,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "4px"
-                }}
-                title="Import last year's faculties, courses, classrooms & labs only, clearing teacher allocations so you can allot fresh and calculate load"
-              >
-                ✨ New Year/Sem Setup (Import Base Data)
-              </button>
-              <button
-                type="button"
-                onClick={handleResetToBlank}
-                className="btn-secondary"
-                style={{
-                  fontSize: "12px",
-                  padding: "6px 12px",
-                  background: "#fef2f2",
-                  color: "#b91c1c",
-                  borderColor: "#fca5a5",
-                  fontWeight: 700
-                }}
-                title="Erase all current data to start entering brand new data from a blank configuration"
-              >
-                🗑️ Reset to Blank
-              </button>
-            </div>
-          </div>
 
-          <p style={{ margin: "0 0 14px", fontSize: "13px", color: "#475569" }}>
-            The generator takes these subjects, faculty members, classrooms, and labs, and runs a synchronized constraint engine ensuring <strong>no teacher or classroom is double-booked across SY, TY, or BTech</strong>.
-          </p>
+
 
           {/* Academic Year & Semester Configuration Bar */}
           <div style={{
@@ -5846,51 +5753,12 @@ function MasterTimetable() {
             justifyContent: "space-between",
             alignItems: "center",
             flexWrap: "wrap",
-            gap: "12px"
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
-                <span style={{ fontSize: "11px", fontWeight: 700, color: "#0369a1", textTransform: "uppercase" }}>
-                  Academic Session
-                </span>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  <select
-                    value={academicSession}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === "__ADD_NEW__") {
-                        setNewYearSetupSession(academicSession);
-                        setNewYearSetupSemester(academicSemester);
-                        setShowCustomSessionField(true);
-                        setNewYearModalOpen(true);
-                        return;
-                      }
-                      setAcademicSession(val);
-                      const savedForSession = localStorage.getItem(`payload_${val}_${academicSemester}`);
-                      if (savedForSession) {
-                        try {
-                          const parsed = JSON.parse(savedForSession);
-                          setInputs(parsed);
-                        } catch (err) {}
-                      }
-                    }}
-                    style={{
-                      padding: "5px 10px",
-                      borderRadius: "6px",
-                      border: "1px solid #0284c7",
-                      fontSize: "13px",
-                      fontWeight: 700,
-                      color: "#0f172a",
-                      background: "white"
-                    }}
-                    title="Select Academic Year Session"
-                  >
-                    {availableSessions.map((sess) => (
-                      <option key={sess} value={sess}>{sess}</option>
-                    ))}
-                    <option value="__ADD_NEW__">+ Add New Session...</option>
-                  </select>
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px", width: "100%", alignItems: "center" }}>
 
+              {/* Top Row: Setup, Year, Clear Subjects */}
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", justifyContent: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", justifyContent: "center" }}>
                   <button
                     type="button"
                     onClick={() => {
@@ -5904,139 +5772,134 @@ function MasterTimetable() {
                       color: "white",
                       border: "none",
                       borderRadius: "6px",
-                      padding: "5px 12px",
-                      fontSize: "12px",
+                      padding: "6px 14px",
+                      fontSize: "13px",
                       fontWeight: 700,
                       cursor: "pointer",
                       display: "inline-flex",
                       alignItems: "center",
-                      gap: "5px",
+                      gap: "6px",
                       boxShadow: "0 2px 4px rgba(37,99,235,0.2)"
                     }}
                     title="Setup fresh timetable for this academic year/semester by importing faculties, courses, classrooms & labs"
                   >
                     ✨ Setup New Timetable
                   </button>
+
+                  <select
+                    value={academicSession}
+                    onChange={(e) => handleSessionChange(e.target.value)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "6px",
+                      border: "1px solid #0284c7",
+                      fontSize: "14px",
+                      fontWeight: 700,
+                      color: "#0f172a",
+                      background: "white"
+                    }}
+                    title="Select Academic Year Session"
+                  >
+                    {availableSessions.map((sess) => (
+                      <option key={sess} value={sess}>{sess}</option>
+                    ))}
+                    <option value="__ADD_NEW__">+ Add New Session...</option>
+                  </select>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const confirmed = window.confirm("Are you sure you want to clear all Theory Subjects, Lab Courses, and Practicals for this semester? (Faculties and Rooms will be kept)");
+                    if (confirmed) {
+                      const clearedInputs = {
+                        ...inputs,
+                        yearData: {
+                          SY: { ...inputs.yearData?.SY, subjects: [], labCourses: [], practicals: [], fixedSlots: [], offSlots: [] },
+                          TY: { ...inputs.yearData?.TY, subjects: [], labCourses: [], practicals: [], fixedSlots: [], offSlots: [] },
+                          BTECH: { ...inputs.yearData?.BTECH, subjects: [], labCourses: [], practicals: [], fixedSlots: [], offSlots: [] }
+                        }
+                      };
+                      setInputs(clearedInputs);
+                      localStorage.setItem(`payload_${academicSession}_${academicSemester}`, JSON.stringify(clearedInputs));
+                      localStorage.setItem("customMasterPayload", JSON.stringify(clearedInputs));
+                    }
+                  }}
+                  style={{
+                    background: "#fee2e2",
+                    color: "#ef4444",
+                    border: "1px solid #fca5a5",
+                    borderRadius: "6px",
+                    padding: "6px 14px",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px"
+                  }}
+                  title="Clear all subjects and lab courses but keep faculties and rooms"
+                >
+                  🧹 Clear Subjects & Labs
+                </button>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
-                <span style={{ fontSize: "11px", fontWeight: 700, color: "#0369a1", textTransform: "uppercase" }}>
-                  Academic Term (2 Semesters / Year)
-                </span>
+              {/* Bottom Row: Semesters & Info Pill */}
+              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "12px", justifyContent: "center" }}>
                 <div style={{ display: "flex", gap: "6px" }}>
                   <button
                     type="button"
-                    onClick={() => setAcademicSemester("PART-I")}
+                    onClick={() => handleSemesterChange("PART-I")}
                     style={{
-                      padding: "5px 12px",
+                      padding: "6px 14px",
                       borderRadius: "6px",
                       border: academicSemester === "PART-I" ? "2px solid #0284c7" : "1px solid #cbd5e1",
                       background: academicSemester === "PART-I" ? "#0284c7" : "white",
                       color: academicSemester === "PART-I" ? "white" : "#334155",
                       fontWeight: 700,
-                      fontSize: "12px",
+                      fontSize: "13px",
                       cursor: "pointer"
                     }}
                   >
-                    PART-I (Odd: Sem III, V, VII)
+                    PART-I (Odd)
                   </button>
                   <button
                     type="button"
-                    onClick={() => setAcademicSemester("PART-II")}
+                    onClick={() => handleSemesterChange("PART-II")}
                     style={{
-                      padding: "5px 12px",
+                      padding: "6px 14px",
                       borderRadius: "6px",
                       border: academicSemester === "PART-II" ? "2px solid #0284c7" : "1px solid #cbd5e1",
                       background: academicSemester === "PART-II" ? "#0284c7" : "white",
                       color: academicSemester === "PART-II" ? "white" : "#334155",
                       fontWeight: 700,
-                      fontSize: "12px",
+                      fontSize: "13px",
                       cursor: "pointer"
                     }}
                   >
-                    PART-II (Even: Sem IV, VI, VIII)
+                    PART-II (Even)
                   </button>
                 </div>
-              </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
-                <span style={{ fontSize: "11px", fontWeight: 700, color: "#0369a1", textTransform: "uppercase" }}>
-                  Active Semester Mapping
-                </span>
-                <span style={{ fontSize: "12px", fontWeight: 600, color: "#0f172a", background: "#f8fafc", padding: "4px 8px", borderRadius: "4px", border: "1px solid #e2e8f0" }}>
+                <span style={{ fontSize: "12px", fontWeight: 600, color: "#0f172a", background: "white", padding: "6px 10px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
                   SY: <strong>{academicSemester === "PART-I" ? "Sem-III" : "Sem-IV"}</strong> | TY: <strong>{academicSemester === "PART-I" ? "Sem-V" : "Sem-VI"}</strong> | BTech: <strong>{academicSemester === "PART-I" ? "Sem-VII" : "Sem-VIII"}</strong>
                 </span>
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-              <button
-                type="button"
-                onClick={() => handleExportCurrentClassExcel(selectedClassYear)}
-                disabled={!masterData}
-                className="btn-secondary"
-                style={{
-                  fontSize: "12px",
-                  padding: "6px 12px",
-                  background: "#10b981",
-                  color: "white",
-                  borderColor: "#059669",
-                  fontWeight: 700,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "4px"
-                }}
-                title={`Export ${selectedClassYear} ${getSemesterForYear(selectedClassYear, academicSemester)} Timetable to Excel (.xlsx)`}
-              >
-                📥 Export {selectedClassYear} ({getSemesterForYear(selectedClassYear, academicSemester)}) (.xlsx)
-              </button>
-              <button
-                type="button"
-                onClick={() => exportMasterDepartmentToExcel({
-                  academicSession,
-                  academicSemester,
-                  masterData,
-                  inputs,
-                  periodTimings
-                })}
-                disabled={!masterData}
-                className="btn-secondary"
-                style={{
-                  fontSize: "12px",
-                  padding: "6px 12px",
-                  background: "#0284c7",
-                  color: "white",
-                  borderColor: "#0369a1",
-                  fontWeight: 700,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "4px"
-                }}
-                title="Export complete departmental multi-sheet master workbook (SY, TY, BTech, and Staff Load Sheet) to Excel (.xlsx)"
-              >
-                📑 Export Full Master (.xlsx)
-              </button>
-            </div>
+
           </div>
 
           {/* Sub Tabs */}
           <div style={{ display: "flex", gap: "8px", borderBottom: "2px solid #e2e8f0", paddingBottom: "10px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
             {[
-              { id: "SY", label: `📘 SY IT Subjects (${inputs.yearData.SY?.subjects?.length || 0})` },
-              { id: "TY", label: `📗 TY IT Subjects (${inputs.yearData.TY?.subjects?.length || 0})` },
-              { id: "BTECH", label: `📙 B.Tech IT Subjects (${inputs.yearData.BTECH?.subjects?.length || 0})` },
-              {
-                id: "PRACTICALS",
-                label: `🔬 Lab Practicals (${(inputs.yearData.SY?.practicals?.length || 0) + (inputs.yearData.TY?.practicals?.length || 0) + (inputs.yearData.BTECH?.practicals?.length || 0)})`
-              },
+              { id: "SY", label: `📘 SY Courses (${inputs.yearData.SY?.subjects?.length || 0})` },
+              { id: "TY", label: `📗 TY Courses (${inputs.yearData.TY?.subjects?.length || 0})` },
+              { id: "BTECH", label: `📙 B.Tech Courses (${inputs.yearData.BTECH?.subjects?.length || 0})` },
               {
                 id: "FIXED",
-                label: `📌 Fixed & FY Loads (${(inputs.yearData.SY?.fixedSlots?.length || 0) + (inputs.yearData.TY?.fixedSlots?.length || 0) + (inputs.yearData.BTECH?.fixedSlots?.length || 0) + (inputs.externalLoads?.length || 0)})`
-              },
-              { id: "FACULTY", label: `👨‍🏫 Shared Faculty (${inputs.faculties?.length || 0})` },
-              { id: "UNAVAILABILITY", label: `🚫 Faculty Off-Slots (${inputs.facultyUnavailability?.length || 0})` },
-              { id: "ROOMS", label: `🏫 Classrooms & Labs (${inputs.rooms?.length || 0})` }
+                label: `📌 Common Slots & FY Courses (${(inputs.yearData.SY?.fixedSlots?.length || 0) + (inputs.yearData.TY?.fixedSlots?.length || 0) + (inputs.yearData.BTECH?.fixedSlots?.length || 0) + (inputs.externalLoads?.length || 0)})`
+              }
             ].map((tab) => {
               const isActive = activeInputTab === tab.id;
               const bg = isActive ? "#1e40af" : "#f1f5f9";
@@ -6045,9 +5908,13 @@ function MasterTimetable() {
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveInputTab(tab.id)}
+                  onClick={() => {
+                    setActiveInputTab(tab.id);
+                    if (["SY", "TY", "BTECH"].includes(tab.id)) {
+                      setLabCourseYear(tab.id);
+                    }
+                  }}
                   style={{
-                    padding: "6px 12px",
                     borderRadius: "6px",
                     border: "none",
                     background: bg,
@@ -6563,149 +6430,6 @@ function MasterTimetable() {
             );
           })()}
 
-          {/* Tab: Faculty Unavailability & Off-Slots */}
-          {activeInputTab === "UNAVAILABILITY" && (
-            <div>
-              <div style={{
-                background: "#fef2f2",
-                border: "1px solid #fca5a5",
-                borderRadius: "8px",
-                padding: "12px 16px",
-                marginBottom: "16px",
-                fontSize: "13px",
-                color: "#991b1b"
-              }}>
-                <strong>🚫 Teacher Unavailability & Off-Slots:</strong> Lock specific periods where a professor is on leave, off-campus, or attending administrative duties. The scheduling engine strictly guarantees that no classes are assigned to that teacher during locked slots, and period swapping actively blocks any manual clash.
-              </div>
-
-              {/* Add Unavailability Form */}
-              <form onSubmit={handleAddUnavailability} style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
-                <select
-                  value={newUnavailFaculty || inputs.faculties?.[0]?.name || ""}
-                  onChange={(e) => setNewUnavailFaculty(e.target.value)}
-                  style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
-                >
-                  {(inputs.faculties || []).map((f) => (
-                    <option key={f.name} value={f.name}>{f.name} — {f.fullName || f.name}</option>
-                  ))}
-                </select>
-
-                <select
-                  value={newUnavailDay}
-                  onChange={(e) => setNewUnavailDay(e.target.value)}
-                  style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
-                >
-                  {days.map((d) => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
-
-                <select
-                  value={newUnavailPeriod}
-                  onChange={(e) => setNewUnavailPeriod(Number(e.target.value))}
-                  style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
-                >
-                  {periods.map((p, idx) => (
-                    <option key={p} value={p}>Period {p} ({periodTimings[idx]})</option>
-                  ))}
-                </select>
-
-                <input
-                  type="text"
-                  placeholder="Reason (e.g. Leave, Committee Meeting, Research)"
-                  value={newUnavailReason}
-                  onChange={(e) => setNewUnavailReason(e.target.value)}
-                  style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px", flex: 1, minWidth: "200px" }}
-                />
-
-                <button
-                  type="submit"
-                  style={{
-                    background: "#dc2626",
-                    color: "white",
-                    padding: "8px 16px",
-                    borderRadius: "6px",
-                    border: "none",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontSize: "13px"
-                  }}
-                >
-                  + Lock Off-Slot
-                </button>
-              </form>
-
-              {/* Unavailability Table */}
-              <div className="table-responsive">
-                <table className="master-table" style={{ width: "100%" }}>
-                  <thead>
-                    <tr>
-                      <th style={{ padding: "8px" }}>#</th>
-                      <th style={{ padding: "8px" }}>Faculty</th>
-                      <th style={{ padding: "8px" }}>Day</th>
-                      <th style={{ padding: "8px" }}>Period & Time</th>
-                      <th style={{ padding: "8px" }}>Reason / Notes</th>
-                      <th style={{ padding: "8px", textAlign: "center" }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(!inputs.facultyUnavailability || inputs.facultyUnavailability.length === 0) ? (
-                      <tr>
-                        <td colSpan="6" style={{ textAlign: "center", padding: "20px", color: "#64748b" }}>
-                          No faculty off-slots configured. All teachers are fully available for all periods.
-                        </td>
-                      </tr>
-                    ) : (
-                      inputs.facultyUnavailability.map((un, idx) => {
-                        const fCode = un.faculty?.name || un.facultyCode || "—";
-                        const fFull = getFacultyFullName(fCode);
-                        const pIdx = (un.period >= 1 && un.period <= 6) ? un.period - 1 : 0;
-                        return (
-                          <tr key={`${fCode}-${un.day}-${un.period}-${idx}`}>
-                            <td style={{ padding: "8px", textAlign: "center", color: "#64748b" }}>{idx + 1}</td>
-                            <td style={{ padding: "8px" }}>
-                              <strong style={{ color: "#1e3a8a" }}>{fCode}</strong>
-                              {fFull && fFull !== fCode && <span style={{ color: "#64748b", fontSize: "12px", marginLeft: "6px" }}>({fFull})</span>}
-                            </td>
-                            <td style={{ padding: "8px", fontWeight: 600 }}>{un.day}</td>
-                            <td style={{ padding: "8px" }}>
-                              <span style={{ background: "#fee2e2", color: "#b91c1c", padding: "2px 6px", borderRadius: "4px", fontWeight: 700, fontSize: "11.5px" }}>
-                                Period {un.period}
-                              </span>
-                              <span style={{ marginLeft: "6px", color: "#64748b", fontSize: "12px" }}>
-                                ({periodTimings[pIdx]})
-                              </span>
-                            </td>
-                            <td style={{ padding: "8px", color: "#475569" }}>
-                              {un.reason || "Faculty Off-Slot / Leave"}
-                            </td>
-                            <td style={{ padding: "8px", textAlign: "center" }}>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteUnavailability(idx)}
-                                style={{
-                                  background: "#fee2e2",
-                                  color: "#dc2626",
-                                  border: "1px solid #fecaca",
-                                  padding: "3px 8px",
-                                  borderRadius: "4px",
-                                  cursor: "pointer",
-                                  fontWeight: 600,
-                                  fontSize: "11px"
-                                }}
-                              >
-                                🗑️ Remove
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
 
           {/* Tab: Classrooms & Labs */}
           {activeInputTab === "ROOMS" && (
@@ -6839,51 +6563,33 @@ function MasterTimetable() {
 
             return (
               <div>
-                {/* Live Capacity Indicator Banner */}
+                {/* Statistics Banner */}
                 <div style={{
                   display: "flex",
-                  justifyContent: "space-between",
                   alignItems: "center",
                   padding: "12px 16px",
                   borderRadius: "8px",
                   marginBottom: "16px",
-                  background: isOverCapacity ? "#fef2f2" : isPerfect ? "#f0fdf4" : "#f0f9ff",
-                  border: `1px solid ${isOverCapacity ? "#fca5a5" : isPerfect ? "#86efac" : "#bae6fd"}`,
+                  background: "#f8fafc",
+                  border: "1px solid #cbd5e1",
                   fontSize: "13px"
                 }}>
-                  <div style={{ display: "flex", gap: "14px", alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontWeight: 700, color: "#1e293b" }}>
-                      📊 {activeInputTab} Capacity: {totalWeeklySlots} total slots/wk
+                  <div style={{ display: "flex", gap: "24px", alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 700, color: "#1e293b", paddingRight: "8px", borderRight: "2px solid #cbd5e1" }}>
+                      📊 {activeInputTab} Statistics
                     </span>
-                    <span style={{ color: "#64748b" }}>
-                      Fixed: <strong>{fixedCount}</strong>
+                    <span style={{ color: "#2563eb", fontWeight: 600 }}>
+                      TH Subjects: <strong>{subjectsList.length}</strong>
                     </span>
-                    <span style={{ color: "#64748b" }}>
-                      Lab Practicals: <strong>{practicalSlots}</strong>
+                    <span style={{ color: "#d97706", fontWeight: 600 }}>
+                      Lab Courses: <strong>{currentYearData.labCourses?.length || 0}</strong>
                     </span>
-                    <span style={{ color: "#0284c7", fontWeight: 600 }}>
-                      Available Theory Slots: <strong>{availableTheorySlots}</strong>
+                    <span style={{ color: "#059669", fontWeight: 600 }}>
+                      Mix Central Subjects: <strong>{fixedCount}</strong>
                     </span>
-                    <span style={{ color: isOverCapacity ? "#b91c1c" : isPerfect ? "#15803d" : "#0284c7", fontWeight: 700 }}>
-                      Allocated Theory: <strong>{totalTheoryRequested}</strong> hrs
+                    <span style={{ color: "#475569", fontWeight: 600 }}>
+                      Total Slots: <strong>{totalWeeklySlots}</strong>
                     </span>
-                  </div>
-                  <div>
-                    {isOverCapacity && (
-                      <span style={{ color: "#dc2626", fontWeight: 700, background: "#fee2e2", padding: "4px 10px", borderRadius: "6px" }}>
-                        ⚠️ Exceeds by {totalTheoryRequested - availableTheorySlots} hr(s)
-                      </span>
-                    )}
-                    {isPerfect && (
-                      <span style={{ color: "#16a34a", fontWeight: 700, background: "#dcfce7", padding: "4px 10px", borderRadius: "6px" }}>
-                        ✓ 100% Balanced ({totalTheoryRequested}/{availableTheorySlots})
-                      </span>
-                    )}
-                    {!isOverCapacity && !isPerfect && (
-                      <span style={{ color: "#0284c7", fontWeight: 600, background: "#e0f2fe", padding: "4px 10px", borderRadius: "6px" }}>
-                        ℹ️ {remainingSlots} free slot(s)
-                      </span>
-                    )}
                   </div>
                 </div>
 
@@ -6927,32 +6633,7 @@ function MasterTimetable() {
                   </button>
                 </form>
 
-                {/* Header and Quick Reset Bar for Year Courses */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", flexWrap: "wrap", gap: "8px" }}>
-                  <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#1e3a8a" }}>
-                    📖 {activeInputTab === "SY" ? "Second Year (S.E. / S.Y. B.Tech)" : (activeInputTab === "TY" ? "Third Year (T.E. / T.Y. B.Tech)" : "Final Year (B.Tech)")} Theory Course Allotments
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleResetYearFacultyAllotments(activeInputTab)}
-                    style={{
-                      background: "#eff6ff",
-                      color: "#1d4ed8",
-                      border: "1px solid #bfdbfe",
-                      borderRadius: "6px",
-                      padding: "5px 12px",
-                      fontSize: "12px",
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "4px"
-                    }}
-                    title={`Keep all course details and classroom intact, but clear assigned teachers on ${activeInputTab} to allot fresh for this semester`}
-                  >
-                    🔄 Clear {activeInputTab === "SY" ? "S.E." : (activeInputTab === "TY" ? "T.E." : "B.Tech")} Faculty Allotments
-                  </button>
-                </div>
+
 
                 {/* Inline Editable Subject Table */}
                 <div style={{ overflowX: "auto" }}>
@@ -7084,811 +6765,540 @@ function MasterTimetable() {
                     </tbody>
                   </table>
                 </div>
-              </div>
-            );
-          })()}
 
-          {/* Tab: Lab Practicals & Batches */}
-          {activeInputTab === "PRACTICALS" && (
-            <div>
-              {/* SECTION 1: COORDINATOR LAB COURSES & AUTO-ASSIGNMENT */}
-              <div style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "8px", padding: "16px", marginBottom: "20px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "10px" }}>
-                  <div>
-                    <h4 style={{ margin: 0, color: "#1e3a8a", fontSize: "15px", display: "flex", alignItems: "center", gap: "6px" }}>
-                      🧪 Coordinator Lab Courses (Auto-Assign to 4 Batches on Different Days)
-                    </h4>
-                    <p style={{ margin: "4px 0 0", fontSize: "12.5px", color: "#64748b" }}>
-                      Specify the lab subject and assigned teacher. The engine automatically rotates the 4 batches across 4 different days in 2-hour continuous blocks (guaranteeing 1 lab per subject per batch).
-                    </p>
-                  </div>
 
-                  {/* Class Filter Pills */}
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    {["SY", "TY", "BTECH"].map((yr) => (
-                      <button
-                        key={yr}
-                        type="button"
-                        onClick={() => setLabCourseYear(yr)}
-                        style={{
-                          padding: "6px 14px",
-                          borderRadius: "6px",
-                          border: labCourseYear === yr ? "2px solid #2563eb" : "1px solid #cbd5e1",
-                          background: labCourseYear === yr ? "#eff6ff" : "#ffffff",
-                          color: labCourseYear === yr ? "#1e40af" : "#475569",
-                          fontWeight: 700,
-                          fontSize: "12.5px",
-                          cursor: "pointer"
-                        }}
-                      >
-                        {yr} Lab Courses ({(inputs.yearData[yr]?.labCourses || []).length})
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Teacher Overlap Warning Notice */}
-                {(() => {
-                  const currentCourses = inputs.yearData[labCourseYear]?.labCourses || [];
-                  const teacherCoursesMap = {};
-                  currentCourses.forEach((lc) => {
-                    const facs = Array.isArray(lc.faculties) && lc.faculties.length > 0
-                      ? lc.faculties
-                      : (lc.faculty ? [lc.faculty] : []);
-                    facs.forEach((f) => {
-                      if (!f) return;
-                      const fNorm = f.trim().toUpperCase();
-                      if (!teacherCoursesMap[fNorm]) teacherCoursesMap[fNorm] = [];
-                      if (!teacherCoursesMap[fNorm].includes(lc.code)) teacherCoursesMap[fNorm].push(lc.code);
+                {/* SECTION 1: COORDINATOR LAB COURSES & AUTO-ASSIGNMENT */}
+                <div style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "8px", padding: "16px", marginBottom: "20px" }}>
+                  {/* Teacher Overlap Warning Notice */}
+                  {(() => {
+                    const currentCourses = inputs.yearData[labCourseYear]?.labCourses || [];
+                    const teacherCoursesMap = {};
+                    currentCourses.forEach((lc) => {
+                      const facs = Array.isArray(lc.faculties) && lc.faculties.length > 0
+                        ? lc.faculties
+                        : (lc.faculty ? [lc.faculty] : []);
+                      facs.forEach((f) => {
+                        if (!f) return;
+                        const fNorm = f.trim().toUpperCase();
+                        if (!teacherCoursesMap[fNorm]) teacherCoursesMap[fNorm] = [];
+                        if (!teacherCoursesMap[fNorm].includes(lc.code)) teacherCoursesMap[fNorm].push(lc.code);
+                      });
                     });
-                  });
-                  const overlaps = Object.entries(teacherCoursesMap).filter(([_, courses]) => courses.length > 1);
-                  if (overlaps.length === 0) return null;
-                  return (
-                    <div style={{
-                      background: "#fffbeb",
-                      border: "1px solid #fde68a",
-                      borderRadius: "8px",
-                      padding: "10px 14px",
-                      marginBottom: "14px",
-                      fontSize: "12px",
-                      color: "#92400e",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px"
-                    }}>
-                      <span style={{ fontSize: "18px" }}>⚠️</span>
-                      <div>
-                        <strong>Parallel Faculty Notice:</strong>{" "}
-                        {overlaps.map(([t, courses]) => `${t} is assigned to both ${courses.join(" and ")}`).join("; ")}.
-                        <div style={{ fontSize: "11px", color: "#b45309", marginTop: "2px" }}>
-                          In parallel lab sessions, a teacher cannot teach two batches at the same time. The scheduler will automatically resolve conflicts by substituting available faculty, or you can assign distinct teachers for each parallel lab above.
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Add Lab Course Form Card */}
-                <div style={{
-                  background: "#ffffff",
-                  borderRadius: "8px",
-                  border: "1px solid #e2e8f0",
-                  padding: "16px",
-                  marginBottom: "16px",
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.05)"
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                    <div>
-                      <h4 style={{ margin: 0, fontSize: "14px", fontWeight: 700, color: "#1e293b" }}>
-                        ➕ Add Lab Course & Assign Teachers ({labCourseYear})
-                      </h4>
-                      <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
-                        Assign 1, 2, or more teachers per lab. Teachers will be distributed across batches (I1, I2, I3, I4).
-                      </p>
-                    </div>
-                  </div>
-
-                  <form onSubmit={handleAddLabCourse}>
-                    {/* Basic Info Row */}
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px", marginBottom: "12px" }}>
-                      <div>
-                        <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#475569", marginBottom: "4px" }}>
-                          Lab Subject Code *
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. OOPS, DS, MAD"
-                          value={newLabCode}
-                          onChange={(e) => setNewLabCode(e.target.value)}
-                          style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontWeight: 700, boxSizing: "border-box" }}
-                        />
-                      </div>
-                      <div style={{ gridColumn: "span 2" }}>
-                        <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#475569", marginBottom: "4px" }}>
-                          Lab Course Title
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Object Oriented Programming Lab"
-                          value={newLabName}
-                          onChange={(e) => setNewLabName(e.target.value)}
-                          style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", boxSizing: "border-box" }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#475569", marginBottom: "4px" }}>
-                          Preferred Lab Room
-                        </label>
-                        <select
-                          value={newLabRoom}
-                          onChange={(e) => setNewLabRoom(e.target.value)}
-                          style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", boxSizing: "border-box" }}
-                        >
-                          {inputs.rooms.filter((r) => r.type === "LAB").map((r) => (
-                            <option key={r.name} value={r.name}>{r.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* Step 1: Select Multiple Teachers for this Lab */}
-                    <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "6px", border: "1px solid #e2e8f0", marginBottom: "12px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
+                    const overlaps = Object.entries(teacherCoursesMap).filter(([_, courses]) => courses.length > 1);
+                    if (overlaps.length === 0) return null;
+                    return (
+                      <div style={{
+                        background: "#fffbeb",
+                        border: "1px solid #fde68a",
+                        borderRadius: "8px",
+                        padding: "10px 14px",
+                        marginBottom: "14px",
+                        fontSize: "12px",
+                        color: "#92400e",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px"
+                      }}>
+                        <span style={{ fontSize: "18px" }}>⚠️</span>
                         <div>
-                          <span style={{ fontSize: "12px", fontWeight: 700, color: "#1e40af" }}>
-                            👩‍🏫 Step 1: Select Teachers for this Lab ({newLabFaculties.length} selected)
-                          </span>
-                          <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>
-                            (Select 1 or more faculty members who teach this lab course)
-                          </span>
-                        </div>
-                        {newLabFaculties.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setNewLabFaculties([]);
-                              setNewLabBatchMap({ I1: "", I2: "", I3: "", I4: "" });
-                            }}
-                            style={{ background: "none", border: "none", color: "#ef4444", fontSize: "11px", cursor: "pointer", fontWeight: 600 }}
-                          >
-                            ✕ Clear All
-                          </button>
-                        )}
-                      </div>
-
-                      <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", marginBottom: "8px" }}>
-                        <select
-                          value=""
-                          onChange={(e) => {
-                            if (e.target.value) handleAddLabFaculty(e.target.value);
-                          }}
-                          style={{ padding: "7px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", minWidth: "220px", fontSize: "12.5px" }}
-                        >
-                          <option value="">➕ Choose teacher to add...</option>
-                          {inputs.faculties
-                            .filter((f) => !newLabFaculties.includes(f.name))
-                            .map((f) => (
-                              <option key={f.name} value={f.name}>
-                                {f.name} - {f.fullName || f.name}
-                              </option>
-                            ))}
-                        </select>
-                        <span style={{ fontSize: "11px", color: "#64748b" }}>
-                          Tip: Add multiple teachers (e.g. 2 or 3) to share the batches of this lab course.
-                        </span>
-                      </div>
-
-                      {/* Selected Teachers Chips */}
-                      {newLabFaculties.length > 0 ? (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
-                          {newLabFaculties.map((fac, fIdx) => (
-                            <span
-                              key={fac}
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: "6px",
-                                background: "#eff6ff",
-                                color: "#1e40af",
-                                border: "1px solid #bfdbfe",
-                                padding: "4px 10px",
-                                borderRadius: "16px",
-                                fontSize: "12px",
-                                fontWeight: 600
-                              }}
-                            >
-                              <span>{getFacultyFullName(fac)} ({fac})</span>
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveLabFaculty(fac)}
-                                style={{
-                                  background: "#dbeafe",
-                                  border: "none",
-                                  borderRadius: "50%",
-                                  width: "18px",
-                                  height: "18px",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  cursor: "pointer",
-                                  fontSize: "11px",
-                                  color: "#1e40af",
-                                  lineHeight: 1,
-                                  padding: 0
-                                }}
-                                title="Remove teacher"
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: "12px", color: "#94a3b8", fontStyle: "italic" }}>
-                          No teachers added yet. Choose at least one teacher from the dropdown above.
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Step 2: Assign Selected Teachers to Batches */}
-                    {newLabFaculties.length > 0 && (
-                      <div style={{ background: "#f0fdf4", padding: "12px", borderRadius: "6px", border: "1px solid #bbf7d0", marginBottom: "14px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
-                          <div>
-                            <span style={{ fontSize: "12px", fontWeight: 700, color: "#166534" }}>
-                              🔀 Step 2: Batch Assignment (I1, I2, I3, I4)
-                            </span>
-                            <span style={{ fontSize: "11px", color: "#15803d", marginLeft: "6px" }}>
-                              (Auto-distributed round-robin; customize each batch below if desired)
-                            </span>
+                          <strong>Parallel Faculty Notice:</strong>{" "}
+                          {overlaps.map(([t, courses]) => `${t} is assigned to both ${courses.join(" and ")}`).join("; ")}.
+                          <div style={{ fontSize: "11px", color: "#b45309", marginTop: "2px" }}>
+                            In parallel lab sessions, a teacher cannot teach two batches at the same time. The scheduler will automatically resolve conflicts by substituting available faculty, or you can assign distinct teachers for each parallel lab above.
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const currentBatches = (inputs.yearData[labCourseYear]?.batches && inputs.yearData[labCourseYear].batches.length > 0)
-                                ? inputs.yearData[labCourseYear].batches.map((b) => b.name)
-                                : ["I1", "I2", "I3", "I4"];
-                              const rebalanced = {};
-                              currentBatches.forEach((b, idx) => {
-                                rebalanced[b] = newLabFaculties[idx % newLabFaculties.length];
-                              });
-                              setNewLabBatchMap(rebalanced);
-                            }}
-                            style={{
-                              background: "#dcfce7",
-                              border: "1px solid #86efac",
-                              color: "#166534",
-                              padding: "2px 8px",
-                              borderRadius: "4px",
-                              fontSize: "11px",
-                              fontWeight: 600,
-                              cursor: "pointer"
-                            }}
-                          >
-                            🔄 Re-balance Round-Robin
-                          </button>
-                        </div>
-
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "8px" }}>
-                          {((inputs.yearData[labCourseYear]?.batches && inputs.yearData[labCourseYear].batches.length > 0)
-                            ? inputs.yearData[labCourseYear].batches.map((b) => b.name)
-                            : ["I1", "I2", "I3", "I4"]
-                          ).map((batch) => (
-                            <div key={batch} style={{ background: "#ffffff", padding: "8px 10px", borderRadius: "6px", border: "1px solid #dcfce7" }}>
-                              <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#166534", marginBottom: "4px" }}>
-                                Batch {batch}:
-                              </label>
-                              <select
-                                value={newLabBatchMap[batch] || ""}
-                                onChange={(e) => handleBatchFacultyChange(batch, e.target.value)}
-                                style={{ width: "100%", padding: "5px 8px", borderRadius: "4px", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: 600, color: "#1e3a8a" }}
-                              >
-                                {newLabFaculties.map((fac) => (
-                                  <option key={fac} value={fac}>{fac} - {getFacultyFullName(fac)}</option>
-                                ))}
-                                {/* Allow assigning any faculty if desired */}
-                                {inputs.faculties.filter((f) => !newLabFaculties.includes(f.name)).map((f) => (
-                                  <option key={f.name} value={f.name}>{f.name} (other)</option>
-                                ))}
-                              </select>
-                            </div>
-                          ))}
                         </div>
                       </div>
-                    )}
+                    );
+                  })()}
 
-                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  {/* Add Lab Course Form Card */}
+                  <div style={{ marginBottom: "16px" }}>
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (!newLabCode.trim() || newLabFaculties.length === 0) return;
+                        handleAddLabCourse(e);
+                      }}
+                      style={{ display: "flex", gap: "8px", flexWrap: "nowrap", alignItems: "center" }}
+                    >
+                      <input
+                        type="text"
+                        placeholder="Lab Code (e.g. CS301)"
+                        value={newLabCode}
+                        onChange={(e) => setNewLabCode(e.target.value)}
+                        style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", width: "110px" }}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Lab Name (e.g. AI Lab)"
+                        value={newLabName}
+                        onChange={(e) => setNewLabName(e.target.value)}
+                        style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", flex: 1, minWidth: "130px" }}
+                      />
+                      <select
+                        value={newLabContactHours}
+                        onChange={(e) => setNewLabContactHours(e.target.value)}
+                        style={{ padding: "8px 6px", borderRadius: "6px", border: "1px solid #cbd5e1", width: "75px" }}
+                        title="Contact Hours"
+                      >
+                        <option value="2">2 Hrs</option>
+                        <option value="4">4 Hrs</option>
+                        <option value="6">6 Hrs</option>
+                        <option value="8">8 Hrs</option>
+                      </select>
+                      <select
+                        value={newLabRoom}
+                        onChange={(e) => setNewLabRoom(e.target.value)}
+                        style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", width: "110px" }}
+                      >
+                        <option value="">Pref. Room</option>
+                        {inputs.rooms.filter((r) => r.type === "LAB").map((r) => (
+                          <option key={r.name} value={r.name}>{r.name}</option>
+                        ))}
+                      </select>
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) handleAddLabFaculty(e.target.value);
+                        }}
+                        style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", width: "140px" }}
+                      >
+                        <option value="">Select Faculty...</option>
+                        {inputs.faculties
+                          .filter((f) => !newLabFaculties.includes(f.name))
+                          .map((f) => (
+                            <option key={f.name} value={f.name}>{f.name} - {f.fullName || f.name}</option>
+                          ))}
+                      </select>
                       <button
                         type="submit"
                         className="btn-primary"
-                        style={{ padding: "8px 20px", fontWeight: 700, fontSize: "13px" }}
-                        disabled={!newLabCode.trim() || newLabFaculties.length === 0}
+                        style={{ padding: "8px 12px", whiteSpace: "nowrap" }}
                       >
-                        + Add Lab Course to {labCourseYear}
+                        + Add Lab Course
                       </button>
-                    </div>
-                  </form>
-                </div>
-
-                {/* Configured Lab Courses Table */}
-                <div style={{ background: "#ffffff", borderRadius: "6px", border: "1px solid #e2e8f0", overflowX: "auto", marginBottom: "14px" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px" }}>
-                    <thead>
-                      <tr style={{ background: "#f1f5f9", textAlign: "left", borderBottom: "1px solid #cbd5e1" }}>
-                        <th style={{ padding: "10px 12px" }}>Code</th>
-                        <th style={{ padding: "10px 12px" }}>Lab Course Title</th>
-                        <th style={{ padding: "10px 12px" }}>Assigned Teachers & Batch Distribution</th>
-                        <th style={{ padding: "10px 12px" }}>Preferred Lab</th>
-                        <th style={{ padding: "10px 12px", textAlign: "center" }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(inputs.yearData[labCourseYear]?.labCourses || []).length === 0 ? (
-                        <tr>
-                          <td colSpan="5" style={{ textAlign: "center", padding: "20px", color: "#94a3b8" }}>
-                            No lab courses defined for {labCourseYear}. Add lab courses above to enable 4-batch auto-scheduling.
-                          </td>
-                        </tr>
-                      ) : (
-                        (inputs.yearData[labCourseYear]?.labCourses || []).map((lc, idx) => {
-                          const facultiesList = Array.isArray(lc.faculties) && lc.faculties.length > 0
-                            ? lc.faculties
-                            : (lc.faculty ? [lc.faculty] : []);
-                          const batchMap = lc.batchFacultyMap || {};
-                          const hasMultiTeachers = facultiesList.length > 1;
-
-                          return (
-                            <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                              <td style={{ padding: "10px 12px", fontWeight: 700, color: "#1e3a8a" }}>{lc.code}</td>
-                              <td style={{ padding: "10px 12px", fontWeight: 500 }}>{lc.name}</td>
-                              <td style={{ padding: "10px 12px" }}>
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center", marginBottom: "6px" }}>
-                                  <span style={{ fontSize: "11px", fontWeight: 700, color: "#475569" }}>
-                                    Teachers ({facultiesList.length}):
-                                  </span>
-                                  {facultiesList.map((f, fi) => (
-                                    <span
-                                      key={fi}
-                                      style={{
-                                        background: "#eff6ff",
-                                        color: "#1e40af",
-                                        padding: "2px 8px",
-                                        borderRadius: "4px",
-                                        fontSize: "11.5px",
-                                        fontWeight: 600,
-                                        border: "1px solid #bfdbfe"
-                                      }}
-                                    >
-                                      {f} ({getFacultyFullName(f)})
-                                    </span>
-                                  ))}
-                                </div>
-                                {/* Batch Breakdown */}
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                                  {Object.keys(batchMap).length > 0 ? (
-                                    Object.entries(batchMap).map(([b, fac]) => (
-                                      <span
-                                        key={b}
-                                        style={{
-                                          background: "#f0fdf4",
-                                          color: "#166534",
-                                          padding: "1px 6px",
-                                          borderRadius: "3px",
-                                          fontSize: "11px",
-                                          border: "1px solid #bbf7d0"
-                                        }}
-                                      >
-                                        <strong>{b}:</strong> {fac}
-                                      </span>
-                                    ))
-                                  ) : (
-                                    <span style={{ fontSize: "11px", color: "#64748b", fontStyle: "italic" }}>
-                                      All batches: {lc.faculty}
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td style={{ padding: "10px 12px" }}>
-                                <span style={{ background: "#fef3c7", color: "#b45309", padding: "2px 8px", borderRadius: "4px", fontWeight: 700 }}>
-                                  {lc.preferredRoom || "Any Lab"}
-                                </span>
-                              </td>
-                              <td style={{ padding: "10px 12px", textAlign: "center" }}>
-                                <div style={{ display: "inline-flex", gap: "6px" }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleStartEditLabCourse(labCourseYear, idx)}
-                                    style={{
-                                      background: "#eff6ff",
-                                      color: "#2563eb",
-                                      border: "1px solid #bfdbfe",
-                                      padding: "4px 8px",
-                                      borderRadius: "4px",
-                                      cursor: "pointer",
-                                      fontWeight: 600,
-                                      fontSize: "11.5px"
-                                    }}
-                                    title="Edit teachers and batch assignments"
-                                  >
-                                    ✏️ Edit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteLabCourse(labCourseYear, idx)}
-                                    style={{
-                                      background: "#fee2e2",
-                                      color: "#dc2626",
-                                      border: "none",
-                                      padding: "4px 8px",
-                                      borderRadius: "4px",
-                                      cursor: "pointer",
-                                      fontWeight: 600,
-                                      fontSize: "11.5px"
-                                    }}
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Edit Lab Course Modal / Dialog */}
-                {editingLabCourse && (
-                  <div style={{
-                    position: "fixed",
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    background: "rgba(15, 23, 42, 0.6)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    zIndex: 9999,
-                    backdropFilter: "blur(2px)",
-                    padding: "16px"
-                  }}>
-                    <div style={{
-                      background: "#ffffff",
-                      borderRadius: "12px",
-                      width: "100%",
-                      maxWidth: "580px",
-                      boxShadow: "0 20px 25px -5px rgba(0,0,0,0.2)",
-                      border: "1px solid #cbd5e1",
-                      overflow: "hidden"
-                    }}>
-                      <div style={{ padding: "16px 20px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#1e293b" }}>
-                          ✏️ Edit Teachers & Batches: {editingLabCourse.code} ({editingLabCourse.yearKey})
-                        </h3>
-                        <button
-                          type="button"
-                          onClick={() => setEditingLabCourse(null)}
-                          style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: "#64748b" }}
-                        >
-                          ×
-                        </button>
-                      </div>
-
-                      <form onSubmit={handleSaveEditedLabCourse} style={{ padding: "20px" }}>
-                        <div style={{ marginBottom: "12px" }}>
-                          <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "4px" }}>
-                            Lab Title
-                          </label>
-                          <input
-                            type="text"
-                            value={editingLabCourse.name}
-                            onChange={(e) => setEditingLabCourse({ ...editingLabCourse, name: e.target.value })}
-                            style={{ width: "100%", padding: "7px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", boxSizing: "border-box" }}
-                          />
-                        </div>
-
-                        <div style={{ marginBottom: "12px" }}>
-                          <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "4px" }}>
-                            Preferred Room
-                          </label>
-                          <select
-                            value={editingLabCourse.preferredRoom}
-                            onChange={(e) => setEditingLabCourse({ ...editingLabCourse, preferredRoom: e.target.value })}
-                            style={{ width: "100%", padding: "7px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", boxSizing: "border-box" }}
+                    </form>
+                    {newLabFaculties.length > 0 && (
+                      <div style={{ marginTop: "10px", display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
+                        {newLabFaculties.map((fac) => (
+                          <span
+                            key={fac}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "6px",
+                              background: "#eff6ff",
+                              color: "#1e40af",
+                              border: "1px solid #bfdbfe",
+                              padding: "4px 10px",
+                              borderRadius: "16px",
+                              fontSize: "12px",
+                              fontWeight: 600
+                            }}
                           >
-                            {inputs.rooms.filter((r) => r.type === "LAB").map((r) => (
-                              <option key={r.name} value={r.name}>{r.name}</option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {/* Edit Teachers for this lab */}
-                        <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "14px" }}>
-                          <div style={{ fontSize: "12px", fontWeight: 700, color: "#1e40af", marginBottom: "6px" }}>
-                            Assigned Teachers ({editingLabCourse.faculties.length})
-                          </div>
-                          <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
-                            <select
-                              value=""
-                              onChange={(e) => {
-                                const fac = e.target.value;
-                                if (!fac || editingLabCourse.faculties.includes(fac)) return;
-                                const nextFacs = [...editingLabCourse.faculties, fac];
-                                const currentBatches = (inputs.yearData[editingLabCourse.yearKey]?.batches && inputs.yearData[editingLabCourse.yearKey].batches.length > 0)
-                                  ? inputs.yearData[editingLabCourse.yearKey].batches.map((b) => b.name)
-                                  : ["I1", "I2", "I3", "I4"];
-                                const nextBatchMap = { ...editingLabCourse.batchFacultyMap };
-                                currentBatches.forEach((b, i) => {
-                                  if (!nextBatchMap[b]) nextBatchMap[b] = nextFacs[i % nextFacs.length];
-                                });
-                                setEditingLabCourse({
-                                  ...editingLabCourse,
-                                  faculties: nextFacs,
-                                  batchFacultyMap: nextBatchMap
-                                });
-                              }}
-                              style={{ padding: "6px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", flex: 1 }}
-                            >
-                              <option value="">➕ Add another teacher...</option>
-                              {inputs.faculties
-                                .filter((f) => !editingLabCourse.faculties.includes(f.name))
-                                .map((f) => (
-                                  <option key={f.name} value={f.name}>{f.name} - {f.fullName || f.name}</option>
-                                ))}
-                            </select>
-                          </div>
-
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                            {editingLabCourse.faculties.map((fac) => (
-                              <span
-                                key={fac}
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: "6px",
-                                  background: "#eff6ff",
-                                  color: "#1e40af",
-                                  border: "1px solid #bfdbfe",
-                                  padding: "3px 8px",
-                                  borderRadius: "14px",
-                                  fontSize: "11.5px",
-                                  fontWeight: 600
-                                }}
-                              >
-                                <span>{fac}</span>
-                                {editingLabCourse.faculties.length > 1 && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const nextFacs = editingLabCourse.faculties.filter((f) => f !== fac);
-                                      const nextBatchMap = { ...editingLabCourse.batchFacultyMap };
-                                      Object.keys(nextBatchMap).forEach((b) => {
-                                        if (nextBatchMap[b] === fac) nextBatchMap[b] = nextFacs[0] || "";
-                                      });
-                                      setEditingLabCourse({
-                                        ...editingLabCourse,
-                                        faculties: nextFacs,
-                                        batchFacultyMap: nextBatchMap
-                                      });
-                                    }}
-                                    style={{
-                                      background: "#dbeafe",
-                                      border: "none",
-                                      borderRadius: "50%",
-                                      width: "16px",
-                                      height: "16px",
-                                      cursor: "pointer",
-                                      fontSize: "11px",
-                                      color: "#1e40af",
-                                      padding: 0,
-                                      lineHeight: 1
-                                    }}
-                                  >
-                                    ×
-                                  </button>
-                                )}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Batch Assignments */}
-                        <div style={{ background: "#f0fdf4", padding: "12px", borderRadius: "8px", border: "1px solid #bbf7d0", marginBottom: "16px" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                            <span style={{ fontSize: "12px", fontWeight: 700, color: "#166534" }}>
-                              Batch Assignments
-                            </span>
+                            <span>{getFacultyFullName(fac)} ({fac})</span>
                             <button
                               type="button"
-                              onClick={() => {
-                                const currentBatches = (inputs.yearData[editingLabCourse.yearKey]?.batches && inputs.yearData[editingLabCourse.yearKey].batches.length > 0)
-                                  ? inputs.yearData[editingLabCourse.yearKey].batches.map((b) => b.name)
-                                  : ["I1", "I2", "I3", "I4"];
-                                const rebalanced = {};
-                                currentBatches.forEach((b, idx) => {
-                                  rebalanced[b] = editingLabCourse.faculties[idx % editingLabCourse.faculties.length];
-                                });
-                                setEditingLabCourse({
-                                  ...editingLabCourse,
-                                  batchFacultyMap: rebalanced
-                                });
+                              onClick={() => handleRemoveLabFaculty(fac)}
+                              style={{
+                                background: "#dbeafe",
+                                border: "none",
+                                borderRadius: "50%",
+                                width: "18px",
+                                height: "18px",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                cursor: "pointer",
+                                fontSize: "11px",
+                                color: "#1e40af",
+                                lineHeight: 1,
+                                padding: 0
                               }}
-                              style={{ background: "#dcfce7", border: "1px solid #86efac", color: "#166534", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", cursor: "pointer" }}
                             >
-                              🔄 Re-balance Round-Robin
+                              ×
                             </button>
-                          </div>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                            {((inputs.yearData[editingLabCourse.yearKey]?.batches && inputs.yearData[editingLabCourse.yearKey].batches.length > 0)
-                              ? inputs.yearData[editingLabCourse.yearKey].batches.map((b) => b.name)
-                              : ["I1", "I2", "I3", "I4"]
-                            ).map((batch) => (
-                              <div key={batch} style={{ background: "#ffffff", padding: "6px 10px", borderRadius: "6px", border: "1px solid #dcfce7" }}>
-                                <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#166534", marginBottom: "3px" }}>
-                                  Batch {batch}:
-                                </label>
-                                <select
-                                  value={editingLabCourse.batchFacultyMap?.[batch] || ""}
-                                  onChange={(e) => {
-                                    setEditingLabCourse({
-                                      ...editingLabCourse,
-                                      batchFacultyMap: {
-                                        ...editingLabCourse.batchFacultyMap,
-                                        [batch]: e.target.value
-                                      }
-                                    });
-                                  }}
-                                  style={{ width: "100%", padding: "5px", borderRadius: "4px", border: "1px solid #cbd5e1", fontSize: "11.5px", fontWeight: 600 }}
-                                >
-                                  {editingLabCourse.faculties.map((f) => (
-                                    <option key={f} value={f}>{f} - {getFacultyFullName(f)}</option>
-                                  ))}
-                                  {inputs.faculties.filter((f) => !editingLabCourse.faculties.includes(f.name)).map((f) => (
-                                    <option key={f.name} value={f.name}>{f.name} (other)</option>
-                                  ))}
-                                </select>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
+                  {/* Configured Lab Courses Table */}
+                  <div style={{ background: "#ffffff", borderRadius: "6px", border: "1px solid #e2e8f0", overflowX: "auto", marginBottom: "14px" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px" }}>
+                      <thead>
+                        <tr style={{ background: "#f1f5f9", textAlign: "left", borderBottom: "1px solid #cbd5e1" }}>
+                          <th style={{ padding: "10px 12px" }}>Code</th>
+                          <th style={{ padding: "10px 12px" }}>Lab Course Title</th>
+                          <th style={{ padding: "10px 12px" }}>Hours</th>
+                          <th style={{ padding: "10px 12px" }}>Assigned Teachers & Batch Distribution</th>
+                          <th style={{ padding: "10px 12px" }}>Preferred Lab</th>
+                          <th style={{ padding: "10px 12px", textAlign: "center" }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(inputs.yearData[labCourseYear]?.labCourses || []).length === 0 ? (
+                          <tr>
+                            <td colSpan="6" style={{ textAlign: "center", padding: "20px", color: "#94a3b8" }}>
+                              No lab courses defined for {labCourseYear}. Add lab courses above to enable 4-batch auto-scheduling.
+                            </td>
+                          </tr>
+                        ) : (
+                          (inputs.yearData[labCourseYear]?.labCourses || []).map((lc, idx) => {
+                            const facultiesList = Array.isArray(lc.faculties) && lc.faculties.length > 0
+                              ? lc.faculties
+                              : (lc.faculty ? [lc.faculty] : []);
+                            const batchMap = lc.batchFacultyMap || {};
+                            const hasMultiTeachers = facultiesList.length > 1;
 
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                            return (
+                              <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                <td style={{ padding: "10px 12px", fontWeight: 700, color: "#1e3a8a" }}>{lc.code}</td>
+                                <td style={{ padding: "10px 12px", fontWeight: 500 }}>{lc.name}</td>
+                                <td style={{ padding: "10px 12px", fontWeight: 600 }}>{lc.contactHours || 2} Hrs</td>
+                                <td style={{ padding: "10px 12px" }}>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center", marginBottom: "6px" }}>
+                                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#475569" }}>
+                                      Teachers ({facultiesList.length}):
+                                    </span>
+                                    {facultiesList.map((f, fi) => (
+                                      <span
+                                        key={fi}
+                                        style={{
+                                          background: "#eff6ff",
+                                          color: "#1e40af",
+                                          padding: "2px 8px",
+                                          borderRadius: "4px",
+                                          fontSize: "11.5px",
+                                          fontWeight: 600,
+                                          border: "1px solid #bfdbfe"
+                                        }}
+                                      >
+                                        {f} ({getFacultyFullName(f)})
+                                      </span>
+                                    ))}
+                                  </div>
+                                  {/* Batch Breakdown */}
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                                    {Object.keys(batchMap).length > 0 ? (
+                                      Object.entries(batchMap).map(([b, fac]) => (
+                                        <span
+                                          key={b}
+                                          style={{
+                                            background: "#f0fdf4",
+                                            color: "#166534",
+                                            padding: "1px 6px",
+                                            borderRadius: "3px",
+                                            fontSize: "11px",
+                                            border: "1px solid #bbf7d0"
+                                          }}
+                                        >
+                                          <strong>{b}:</strong> {fac}
+                                        </span>
+                                      ))
+                                    ) : (
+                                      <span style={{ fontSize: "11px", color: "#64748b", fontStyle: "italic" }}>
+                                        All batches: {lc.faculty}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td style={{ padding: "10px 12px" }}>
+                                  <span style={{ background: "#fef3c7", color: "#b45309", padding: "2px 8px", borderRadius: "4px", fontWeight: 700 }}>
+                                    {lc.preferredRoom || "Any Lab"}
+                                  </span>
+                                </td>
+                                <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                                  <div style={{ display: "inline-flex", gap: "6px" }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStartEditLabCourse(labCourseYear, idx)}
+                                      style={{
+                                        background: "#eff6ff",
+                                        color: "#2563eb",
+                                        border: "1px solid #bfdbfe",
+                                        padding: "4px 8px",
+                                        borderRadius: "4px",
+                                        cursor: "pointer",
+                                        fontWeight: 600,
+                                        fontSize: "11.5px"
+                                      }}
+                                      title="Edit teachers and batch assignments"
+                                    >
+                                      ✏️ Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteLabCourse(labCourseYear, idx)}
+                                      style={{
+                                        background: "#fee2e2",
+                                        color: "#dc2626",
+                                        border: "none",
+                                        padding: "4px 8px",
+                                        borderRadius: "4px",
+                                        cursor: "pointer",
+                                        fontWeight: 600,
+                                        fontSize: "11.5px"
+                                      }}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Edit Lab Course Modal / Dialog */}
+                  {editingLabCourse && (
+                    <div style={{
+                      position: "fixed",
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      background: "rgba(15, 23, 42, 0.6)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      zIndex: 9999,
+                      backdropFilter: "blur(2px)",
+                      padding: "16px"
+                    }}>
+                      <div style={{
+                        background: "#ffffff",
+                        borderRadius: "12px",
+                        width: "100%",
+                        maxWidth: "580px",
+                        boxShadow: "0 20px 25px -5px rgba(0,0,0,0.2)",
+                        border: "1px solid #cbd5e1",
+                        overflow: "hidden"
+                      }}>
+                        <div style={{ padding: "16px 20px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#1e293b" }}>
+                            ✏️ Edit Teachers & Batches: {editingLabCourse.code} ({editingLabCourse.yearKey})
+                          </h3>
                           <button
                             type="button"
                             onClick={() => setEditingLabCourse(null)}
-                            style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#f8fafc", color: "#475569", fontWeight: 600, cursor: "pointer" }}
+                            style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: "#64748b" }}
                           >
-                            Cancel
-                          </button>
-                          <button
-                            type="submit"
-                            className="btn-primary"
-                            style={{ padding: "8px 20px", fontWeight: 700 }}
-                          >
-                            Save Changes & Sync
+                            ×
                           </button>
                         </div>
-                      </form>
-                    </div>
-                  </div>
-                )}
 
-                {/* Auto-Schedule Action Banner */}
-                <div style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "12px 16px",
-                  background: "#eff6ff",
-                  border: "1px solid #bfdbfe",
-                  borderRadius: "6px",
-                  flexWrap: "wrap",
-                  gap: "12px"
-                }}>
-                  <div style={{ fontSize: "12.5px", color: "#1e40af" }}>
-                    <strong>🎯 Auto-Scheduling Guarantees for {labCourseYear}:</strong>
-                    <div style={{ display: "flex", gap: "12px", marginTop: "4px", flexWrap: "wrap" }}>
-                      <span>✓ 1 lab per subject per batch (0 duplicates)</span>
-                      <span>✓ 2-hour continuous blocks</span>
-                      <span>✓ 4 distinct days (parallel batch rotation)</span>
-                      <span>✓ 0 teacher/room clashes</span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => autoGenerate4BatchPracticals(labCourseYear)}
-                    style={{
-                      padding: "9px 18px",
-                      background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
-                      color: "white",
-                      border: "none",
-                      borderRadius: "6px",
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      boxShadow: "0 2px 4px rgba(37,99,235,0.25)"
-                    }}
-                  >
-                    ✨ Auto-Schedule {labCourseYear} 4 Batches (Different Days, 2-Hr Blocks)
-                  </button>
-                </div>
-              </div>
+                        <form onSubmit={handleSaveEditedLabCourse} style={{ padding: "20px" }}>
+                          <div style={{ marginBottom: "12px" }}>
+                            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "4px" }}>
+                              Lab Title
+                            </label>
+                            <input
+                              type="text"
+                              value={editingLabCourse.name}
+                              onChange={(e) => setEditingLabCourse({ ...editingLabCourse, name: e.target.value })}
+                              style={{ width: "100%", padding: "7px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", boxSizing: "border-box" }}
+                            />
+                          </div>
 
-              {/* SECTION 2: DETAILED PRACTICAL SLOTS (INSPECTION & OVERRIDES) */}
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                  <h4 style={{ margin: 0, color: "#334155", fontSize: "14px" }}>
-                    📋 Generated Practical Sessions for {pracFilterYear === "ALL" ? "All Classes" : pracFilterYear} ({(inputs.yearData[pracFilterYear === "ALL" ? "SY" : pracFilterYear]?.practicals || []).length} sessions)
-                  </h4>
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    {["ALL", "SY", "TY", "BTECH"].map((yr) => (
-                      <button
-                        key={yr}
-                        type="button"
-                        onClick={() => setPracFilterYear(yr)}
-                        style={{
-                          padding: "4px 10px",
-                          borderRadius: "4px",
-                          border: "1px solid #cbd5e1",
-                          background: pracFilterYear === yr ? "#2563eb" : "#f8fafc",
-                          color: pracFilterYear === yr ? "white" : "#334155",
-                          fontSize: "12px",
-                          fontWeight: 600,
-                          cursor: "pointer"
-                        }}
-                      >
-                        {yr === "ALL" ? "All Classes" : `${yr}`}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                          <div style={{ marginBottom: "12px" }}>
+                            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "4px" }}>
+                              Preferred Room
+                            </label>
+                            <select
+                              value={editingLabCourse.preferredRoom}
+                              onChange={(e) => setEditingLabCourse({ ...editingLabCourse, preferredRoom: e.target.value })}
+                              style={{ width: "100%", padding: "7px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", boxSizing: "border-box" }}
+                            >
+                              {inputs.rooms.filter((r) => r.type === "LAB").map((r) => (
+                                <option key={r.name} value={r.name}>{r.name}</option>
+                              ))}
+                            </select>
+                          </div>
 
-                {/* Practicals List Table */}
-                <div style={{ maxHeight: "300px", overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: "6px" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-                    <thead style={{ position: "sticky", top: 0, background: "#f1f5f9", zIndex: 1 }}>
-                      <tr style={{ textAlign: "left", borderBottom: "2px solid #cbd5e1" }}>
-                        <th style={{ padding: "8px" }}>Class</th>
-                        <th style={{ padding: "8px" }}>Batch</th>
-                        <th style={{ padding: "8px" }}>Subject</th>
-                        <th style={{ padding: "8px" }}>Lab Faculty</th>
-                        <th style={{ padding: "8px" }}>Lab Room</th>
-                        <th style={{ padding: "8px" }}>Day & Slot (2-Hour Block)</th>
-                        <th style={{ padding: "8px", textAlign: "center" }}>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {["SY", "TY", "BTECH"]
-                        .filter((yr) => pracFilterYear === "ALL" || pracFilterYear === yr)
-                        .flatMap((yr) => (inputs.yearData[yr]?.practicals || []).map((pr, idx) => ({ ...pr, yr, origIdx: idx })))
-                        .map((pr, i) => (
-                          <tr key={i} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                            <td style={{ padding: "8px", fontWeight: 700, color: "#1e3a8a" }}>{pr.yr}</td>
-                            <td style={{ padding: "8px", fontWeight: 600 }}>{pr.batch}</td>
-                            <td style={{ padding: "8px", fontWeight: 600 }}>{pr.practical}</td>
-                            <td style={{ padding: "8px", color: "#1e40af" }}>{getFacultyFullName(pr.faculty)} ({pr.faculty})</td>
-                            <td style={{ padding: "8px" }}><span className="badge-lab" style={{ padding: "2px 6px", borderRadius: "4px", background: "#fef3c7" }}>{pr.room}</span></td>
-                            <td style={{ padding: "8px", fontWeight: 600 }}>{pr.day} ({pr.period})</td>
-                            <td style={{ padding: "8px", textAlign: "center" }}>
+                          {/* Edit Teachers for this lab */}
+                          <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "14px" }}>
+                            <div style={{ fontSize: "12px", fontWeight: 700, color: "#1e40af", marginBottom: "6px" }}>
+                              Assigned Teachers ({editingLabCourse.faculties.length})
+                            </div>
+                            <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
+                              <select
+                                value=""
+                                onChange={(e) => {
+                                  const fac = e.target.value;
+                                  if (!fac || editingLabCourse.faculties.includes(fac)) return;
+                                  const nextFacs = [...editingLabCourse.faculties, fac];
+                                  const currentBatches = (inputs.yearData[editingLabCourse.yearKey]?.batches && inputs.yearData[editingLabCourse.yearKey].batches.length > 0)
+                                    ? inputs.yearData[editingLabCourse.yearKey].batches.map((b) => b.name)
+                                    : ["I1", "I2", "I3", "I4"];
+                                  const nextBatchMap = { ...editingLabCourse.batchFacultyMap };
+                                  currentBatches.forEach((b, i) => {
+                                    if (!nextBatchMap[b]) nextBatchMap[b] = nextFacs[i % nextFacs.length];
+                                  });
+                                  setEditingLabCourse({
+                                    ...editingLabCourse,
+                                    faculties: nextFacs,
+                                    batchFacultyMap: nextBatchMap
+                                  });
+                                }}
+                                style={{ padding: "6px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", flex: 1 }}
+                              >
+                                <option value="">➕ Add another teacher...</option>
+                                {inputs.faculties
+                                  .filter((f) => !editingLabCourse.faculties.includes(f.name))
+                                  .map((f) => (
+                                    <option key={f.name} value={f.name}>{f.name} - {f.fullName || f.name}</option>
+                                  ))}
+                              </select>
+                            </div>
+
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                              {editingLabCourse.faculties.map((fac) => (
+                                <span
+                                  key={fac}
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "6px",
+                                    background: "#eff6ff",
+                                    color: "#1e40af",
+                                    border: "1px solid #bfdbfe",
+                                    padding: "3px 8px",
+                                    borderRadius: "14px",
+                                    fontSize: "11.5px",
+                                    fontWeight: 600
+                                  }}
+                                >
+                                  <span>{fac}</span>
+                                  {editingLabCourse.faculties.length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const nextFacs = editingLabCourse.faculties.filter((f) => f !== fac);
+                                        const nextBatchMap = { ...editingLabCourse.batchFacultyMap };
+                                        Object.keys(nextBatchMap).forEach((b) => {
+                                          if (nextBatchMap[b] === fac) nextBatchMap[b] = nextFacs[0] || "";
+                                        });
+                                        setEditingLabCourse({
+                                          ...editingLabCourse,
+                                          faculties: nextFacs,
+                                          batchFacultyMap: nextBatchMap
+                                        });
+                                      }}
+                                      style={{
+                                        background: "#dbeafe",
+                                        border: "none",
+                                        borderRadius: "50%",
+                                        width: "16px",
+                                        height: "16px",
+                                        cursor: "pointer",
+                                        fontSize: "11px",
+                                        color: "#1e40af",
+                                        padding: 0,
+                                        lineHeight: 1
+                                      }}
+                                    >
+                                      ×
+                                    </button>
+                                  )}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Batch Assignments */}
+                          <div style={{ background: "#f0fdf4", padding: "12px", borderRadius: "8px", border: "1px solid #bbf7d0", marginBottom: "16px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                              <span style={{ fontSize: "12px", fontWeight: 700, color: "#166534" }}>
+                                Batch Assignments
+                              </span>
                               <button
                                 type="button"
-                                onClick={() => handleDeletePractical(pr.yr, pr.origIdx)}
-                                style={{ background: "#fee2e2", color: "#dc2626", border: "none", padding: "4px 8px", borderRadius: "4px", cursor: "pointer", fontWeight: 600 }}
+                                onClick={() => {
+                                  const currentBatches = (inputs.yearData[editingLabCourse.yearKey]?.batches && inputs.yearData[editingLabCourse.yearKey].batches.length > 0)
+                                    ? inputs.yearData[editingLabCourse.yearKey].batches.map((b) => b.name)
+                                    : ["I1", "I2", "I3", "I4"];
+                                  const rebalanced = {};
+                                  currentBatches.forEach((b, idx) => {
+                                    rebalanced[b] = editingLabCourse.faculties[idx % editingLabCourse.faculties.length];
+                                  });
+                                  setEditingLabCourse({
+                                    ...editingLabCourse,
+                                    batchFacultyMap: rebalanced
+                                  });
+                                }}
+                                style={{ background: "#dcfce7", border: "1px solid #86efac", color: "#166534", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", cursor: "pointer" }}
                               >
-                                Delete
+                                🔄 Re-balance Round-Robin
                               </button>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
+                            </div>
+
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                              {((inputs.yearData[editingLabCourse.yearKey]?.batches && inputs.yearData[editingLabCourse.yearKey].batches.length > 0)
+                                ? inputs.yearData[editingLabCourse.yearKey].batches.map((b) => b.name)
+                                : ["I1", "I2", "I3", "I4"]
+                              ).map((batch) => (
+                                <div key={batch} style={{ background: "#ffffff", padding: "6px 10px", borderRadius: "6px", border: "1px solid #dcfce7" }}>
+                                  <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#166534", marginBottom: "3px" }}>
+                                    Batch {batch}:
+                                  </label>
+                                  <select
+                                    value={editingLabCourse.batchFacultyMap?.[batch] || ""}
+                                    onChange={(e) => {
+                                      setEditingLabCourse({
+                                        ...editingLabCourse,
+                                        batchFacultyMap: {
+                                          ...editingLabCourse.batchFacultyMap,
+                                          [batch]: e.target.value
+                                        }
+                                      });
+                                    }}
+                                    style={{ width: "100%", padding: "5px", borderRadius: "4px", border: "1px solid #cbd5e1", fontSize: "11.5px", fontWeight: 600 }}
+                                  >
+                                    {editingLabCourse.faculties.map((f) => (
+                                      <option key={f} value={f}>{f} - {getFacultyFullName(f)}</option>
+                                    ))}
+                                    {inputs.faculties.filter((f) => !editingLabCourse.faculties.includes(f.name)).map((f) => (
+                                      <option key={f.name} value={f.name}>{f.name} (other)</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                            <button
+                              type="button"
+                              onClick={() => setEditingLabCourse(null)}
+                              style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#f8fafc", color: "#475569", fontWeight: 600, cursor: "pointer" }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              className="btn-primary"
+                              style={{ padding: "8px 20px", fontWeight: 700 }}
+                            >
+                              Save Changes & Sync
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+
+
                 </div>
+
+
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Tab: Fixed Slots & FY Loads */}
           {activeInputTab === "FIXED" && (
@@ -7900,37 +7310,10 @@ function MasterTimetable() {
                     <h4 style={{ margin: "0 0 4px", color: "#1e3a8a", fontSize: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
                       📌 Institutional Fixed Slots (MDM, Open Electives, Mentoring, German)
                     </h4>
-                    <p style={{ margin: 0, fontSize: "12.5px", color: "#64748b" }}>
-                      Locked institutional slots have top priority. Practicals and theory lectures strictly route around them without overwriting.
-                    </p>
+
                   </div>
 
-                  {/* Filter Pills */}
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    {["ALL", "SY", "TY", "BTECH"].map((yr) => (
-                      <button
-                        key={yr}
-                        type="button"
-                        onClick={() => setFixedFilterYear(yr)}
-                        style={{
-                          padding: "6px 12px",
-                          borderRadius: "6px",
-                          border: fixedFilterYear === yr ? "2px solid #2563eb" : "1px solid #cbd5e1",
-                          background: fixedFilterYear === yr ? "#eff6ff" : "#ffffff",
-                          color: fixedFilterYear === yr ? "#1e40af" : "#475569",
-                          fontWeight: 700,
-                          fontSize: "12px",
-                          cursor: "pointer"
-                        }}
-                      >
-                        {yr === "ALL" ? "All Classes" : `${yr} Slots`} (
-                        {yr === "ALL"
-                          ? ["SY", "TY", "BTECH"].reduce((acc, y) => acc + (inputs.yearData[y]?.fixedSlots || []).length, 0)
-                          : (inputs.yearData[yr]?.fixedSlots || []).length}
-                        )
-                      </button>
-                    ))}
-                  </div>
+
                 </div>
 
                 {/* Add Fixed Slot Form */}
@@ -7971,6 +7354,9 @@ function MasterTimetable() {
                     {periods.map((p, idx) => (
                       <option key={p} value={p}>Period {p} ({periodTimings[idx]})</option>
                     ))}
+                    <option value="P1-P2">10:00 To 12:00 (P1-P2)</option>
+                    <option value="P3-P4">12:45 To 02:45 (P3-P4)</option>
+                    <option value="P5-P6">03:00 To 05:00 (P5-P6)</option>
                   </select>
 
                   <input
@@ -8074,6 +7460,9 @@ function MasterTimetable() {
                                   {periods.map((p, idx) => (
                                     <option key={p} value={p}>P{p} ({periodTimings[idx].split(" ")[0]})</option>
                                   ))}
+                                  <option value="P1-P2">P1-P2 (10:00)</option>
+                                  <option value="P3-P4">P3-P4 (12:45)</option>
+                                  <option value="P5-P6">P5-P6 (03:00)</option>
                                 </select>
                               </td>
 
@@ -8133,35 +7522,7 @@ function MasterTimetable() {
                   </table>
                 </div>
 
-                {/* Practical Re-Alignment Helper Action */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0", flexWrap: "wrap", gap: "8px" }}>
-                  <span style={{ fontSize: "12px", color: "#475569" }}>
-                    🔄 Moved any fixed slots? Practicals and lectures will automatically avoid them. You can also re-align 4-batch practicals with 1 click:
-                  </span>
-                  <div style={{ display: "flex", gap: "8px" }}>
-                    {["SY", "TY", "BTECH"].map((yr) => (
-                      <button
-                        key={yr}
-                        type="button"
-                        onClick={() => {
-                          autoGenerate4BatchPracticals(yr);
-                        }}
-                        style={{
-                          padding: "4px 10px",
-                          background: "#e0e7ff",
-                          color: "#3730a3",
-                          border: "1px solid #c7d2fe",
-                          borderRadius: "4px",
-                          fontSize: "11.5px",
-                          fontWeight: 700,
-                          cursor: "pointer"
-                        }}
-                      >
-                        ⚡ Re-Align {yr} Practicals
-                      </button>
-                    ))}
-                  </div>
-                </div>
+
               </div>
 
               {/* Section B: External FY Loads */}
@@ -8287,45 +7648,52 @@ function MasterTimetable() {
             </div>
           )}
 
-          <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end" }}>
+          <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "center", gap: "12px" }}>
             <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                localStorage.setItem("customMasterPayload", JSON.stringify(inputs));
+              }}
+              style={{ padding: "10px 20px", fontSize: "13.5px", background: "#f1f5f9", color: "#334155", border: "1px solid #cbd5e1" }}
+            >
+              ✓ Save Changes
+            </button>
+            <button
+              type="button"
               className="btn-primary"
               onClick={() => {
                 handleGenerate(inputs);
-                setShowInputManager(false);
               }}
               style={{ padding: "10px 20px", fontSize: "13.5px" }}
             >
-              ✓ Save Changes & Generate Conflict-Free Timetable
+              ⚡ Generate Conflict-Free Timetable
             </button>
           </div>
         </div>
       )}
 
-      {/* Conflict & Status Alert */}
-      <div id="conflicts-section" className="master-status-card no-print">
-        <div className="status-item">
-          <span className={`dot ${conflictLog.length === 0 ? "dot-success" : "dot-danger"}`} style={conflictLog.length > 0 ? { background: "#ef4444" } : {}}></span>
-          <strong>Conflict Status:</strong>
-          <span
-            className={`status-tag ${conflictLog.length === 0 ? "success-tag" : "danger-tag"}`}
-            style={conflictLog.length > 0 ? { background: "#fee2e2", color: "#dc2626", border: "1px solid #fca5a5", cursor: "pointer", fontWeight: 700 } : {}}
-            onClick={() => setShowDiagnostics(!showDiagnostics)}
-            title={conflictLog.length > 0 ? "Click to toggle conflict breakdown" : ""}
+
+
+      {/* Smart Regeneration Button (above conflicts) */}
+      {conflictLog && conflictLog.length > 0 && (
+        <div className="no-print" style={{ marginBottom: "16px", display: "flex", justifyContent: "flex-start" }}>
+          <button
+            type="button"
+            onClick={() => handleGenerate(inputs, false)}
+            disabled={loading}
+            style={{
+              background: "#eff6ff", color: "#1d4ed8", padding: "10px 18px", borderRadius: "8px",
+              fontWeight: 700, border: "2px solid #bfdbfe", cursor: loading ? "wait" : "pointer",
+              display: "flex", alignItems: "center", gap: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.05)",
+              transition: "all 0.2s"
+            }}
+            title="Keep your manually swapped blocks fixed while regenerating the rest to resolve conflicts"
           >
-            {conflictLog.length === 0 ? "✓ 0 Conflicts (All 3 Years + FY Conflict-Free)" : `⚠ ${conflictLog.length} Conflicts Detected`}
-          </span>
+            <span>{loading ? "⚡ Generating..." : "⚡ Regenerate Non-Swapped Blocks (Keep My Swaps)"}</span>
+          </button>
         </div>
-        <div className="status-item">
-          <strong>Active Faculty:</strong> {inputs.faculties?.length || 13} Members
-        </div>
-        <div className="status-item">
-          <strong>Theory Rooms:</strong> CR-26, CR-27, CR-212
-        </div>
-        <div className="status-item">
-          <strong>Computer Labs:</strong> IL1 to IL6
-        </div>
-      </div>
+      )}
 
       {/* Active Clashes & Double-Booking Warnings Panel */}
       {conflictLog && conflictLog.length > 0 && (
@@ -8345,25 +7713,7 @@ function MasterTimetable() {
               Immediate Attention Needed
             </span>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {conflictLog.map((conf, idx) => (
-              <div key={idx} style={{
-                background: "white",
-                borderLeft: "4px solid #ef4444",
-                borderRadius: "4px",
-                padding: "10px 14px",
-                fontSize: "13px",
-                color: "#1e293b",
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                boxShadow: "0 1px 3px rgba(0,0,0,0.05)"
-              }}>
-                <span style={{ color: "#ef4444", fontWeight: 800, fontSize: "14px" }}>✕</span>
-                <span style={{ fontWeight: 600 }}>{conf}</span>
-              </div>
-            ))}
-          </div>
+
           <div style={{ marginTop: "12px", fontSize: "12px", color: "#7f1d1d", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
             <span>💡 Tip: Click <strong>"Launch Swap Tool"</strong> to swap clashing periods into open slots with 0 conflicts.</span>
             <button
@@ -8391,7 +7741,7 @@ function MasterTimetable() {
 
       {/* Diagnostics & Bottleneck Inspector */}
       <div className="no-print" style={{ marginBottom: "16px" }}>
-        {diagnostics && diagnostics.filter((d) => d.severity === "ERROR" || d.severity === "WARNING").length > 0 ? (
+        {diagnostics && diagnostics.filter((d) => d.severity === "ERROR" || d.severity === "WARNING").length > 0 && (
           <div>
             <button
               type="button"
@@ -8471,178 +7821,179 @@ function MasterTimetable() {
               </div>
             )}
           </div>
-        ) : (
-          <div style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "8px",
-            background: "#ecfdf5",
-            border: "1px solid #10b981",
-            borderRadius: "6px",
-            padding: "8px 14px",
-            fontSize: "12.5px",
-            fontWeight: 600,
-            color: "#065f46"
-          }}>
-            <span>✅ Constraint Diagnostics: 0 Active Collisions (All constraints satisfied)</span>
-          </div>
         )}
       </div>
 
       {/* Main Master Table */}
       {selectedView === "ALL" && (
         <div className="master-table-card">
-          {/* Official Institutional Header for Master Class Timetable */}
-          <div className="official-master-sheet-header" style={{ textAlign: "center", padding: "12px 14px", borderBottom: "1.5px solid #000000", background: "#ffffff", color: "#000000" }}>
-            <div style={{ fontSize: "14px", fontWeight: 700, letterSpacing: "0.5px" }}>K.E.Society's</div>
-            <div style={{ fontSize: "16px", fontWeight: 800, marginTop: "2px" }}>Rajarambapu Institute of Technology ,Rajaramnagar</div>
-            <div style={{ fontSize: "14px", fontWeight: 700, marginTop: "2px", textDecoration: "underline" }}>Department of Information Technology</div>
-            <div style={{ fontSize: "15px", fontWeight: 800, marginTop: "2px", textDecoration: "underline" }}>Master Class Time Table</div>
-            <div style={{ fontSize: "13px", fontWeight: 700, marginTop: "2px" }}>{academicSession}/ {academicSemester}</div>
-          </div>
+
           <div className="table-responsive">
             <table className="master-table">
-            <thead>
-              {/* Top Column Groups */}
-              <tr className="header-group-row">
-                <th rowSpan="2" className="day-col">Day</th>
-                <th rowSpan="2" className="sr-col">Sr No</th>
-                <th rowSpan="2" className="time-col">Time</th>
+              <thead>
+                {/* Print Headers inside the table */}
+                <tr className="only-print">
+                  <th colSpan="15" style={{ fontSize: "14px", fontWeight: 700, letterSpacing: "0.5px" }}>K.E.Society's</th>
+                </tr>
+                <tr className="only-print">
+                  <th colSpan="15" style={{ fontSize: "16.5px", fontWeight: 800 }}>Rajarambapu Institute of Technology ,Rajaramnagar</th>
+                </tr>
+                <tr className="only-print">
+                  <th colSpan="15" style={{ fontSize: "14.5px", fontWeight: 700 }}>Department of Information Technology</th>
+                </tr>
+                <tr className="only-print">
+                  <th colSpan="15" style={{ fontSize: "15px", fontWeight: 800 }}>Master Class Time Table</th>
+                </tr>
+                <tr className="only-print">
+                  <th colSpan="15" style={{ fontSize: "13.5px", fontWeight: 700 }}>{academicSession}/ {academicSemester}</th>
+                </tr>
 
-                {(selectedView === "ALL" || selectedView === "SY") && (
-                  <th colSpan="3" className="year-group-header sy-group">SY</th>
-                )}
-                {(selectedView === "ALL" || selectedView === "TY") && (
-                  <th colSpan="3" className="year-group-header ty-group">TY</th>
-                )}
-                {(selectedView === "ALL" || selectedView === "BTECH") && (
-                  <th colSpan="3" className="year-group-header btech-group">BTECH</th>
-                )}
+                {/* Top Column Groups */}
+                <tr className="header-group-row">
+                  <th rowSpan="2" className="day-col">Day</th>
+                  <th rowSpan="2" className="sr-col">Sr No</th>
+                  <th rowSpan="2" className="time-col">Time</th>
 
-                {selectedView === "ALL" && (
-                  <>
-                    <th rowSpan="2" className="ext-col">FY-EEDP</th>
-                    <th rowSpan="2" className="ext-col">FY-PPS</th>
-                    <th rowSpan="2" className="ext-col">FY-PCC</th>
-                  </>
-                )}
-              </tr>
+                  {(selectedView === "ALL" || selectedView === "SY") && (
+                    <th colSpan="3" className="year-group-header sy-group">SY</th>
+                  )}
+                  {(selectedView === "ALL" || selectedView === "TY") && (
+                    <th colSpan="3" className="year-group-header ty-group">TY</th>
+                  )}
+                  {(selectedView === "ALL" || selectedView === "BTECH") && (
+                    <th colSpan="3" className="year-group-header btech-group">BTECH</th>
+                  )}
 
-              {/* Sub Columns (Course, Faculty, Location) */}
-              <tr className="sub-header-row">
-                {(selectedView === "ALL" || selectedView === "SY") && (
-                  <>
-                    <th className="sub-col">Course</th>
-                    <th className="sub-col">Faculty</th>
-                    <th className="sub-col">Location</th>
-                  </>
-                )}
-                {(selectedView === "ALL" || selectedView === "TY") && (
-                  <>
-                    <th className="sub-col">Course</th>
-                    <th className="sub-col">Faculty</th>
-                    <th className="sub-col">Location</th>
-                  </>
-                )}
-                {(selectedView === "ALL" || selectedView === "BTECH") && (
-                  <>
-                    <th className="sub-col">Course</th>
-                    <th className="sub-col">Faculty</th>
-                    <th className="sub-col">Location</th>
-                  </>
-                )}
-              </tr>
-            </thead>
+                  {selectedView === "ALL" && (
+                    <>
+                      <th rowSpan="2" className="ext-col">FY-EEDP</th>
+                      <th rowSpan="2" className="ext-col">FY-PPS</th>
+                      <th rowSpan="2" className="ext-col">FY-PCC</th>
+                    </>
+                  )}
+                </tr>
 
-            <tbody>
-              {days.map((day) => (
-                periods.map((period, pIdx) => {
-                  const sy = getCell("SY", day, period);
-                  const ty = getCell("TY", day, period);
-                  const btech = getCell("BTECH", day, period);
-                  const eedp = getExternal("FY-EEDP", day, period);
-                  const pps = getExternal("FY-PPS", day, period);
-                  const pcc = getExternal("FY-PCC", day, period);
+                {/* Sub Columns (Course, Faculty, Location) */}
+                <tr className="sub-header-row">
+                  {(selectedView === "ALL" || selectedView === "SY") && (
+                    <>
+                      <th className="sub-col">Course</th>
+                      <th className="sub-col">Faculty</th>
+                      <th className="sub-col">Location</th>
+                    </>
+                  )}
+                  {(selectedView === "ALL" || selectedView === "TY") && (
+                    <>
+                      <th className="sub-col">Course</th>
+                      <th className="sub-col">Faculty</th>
+                      <th className="sub-col">Location</th>
+                    </>
+                  )}
+                  {(selectedView === "ALL" || selectedView === "BTECH") && (
+                    <>
+                      <th className="sub-col">Course</th>
+                      <th className="sub-col">Faculty</th>
+                      <th className="sub-col">Location</th>
+                    </>
+                  )}
+                </tr>
+              </thead>
 
-                  return (
-                    <tr key={`${day}-${period}`} className={pIdx === 0 ? "day-start-row" : ""}>
-                      {/* Day Name (Only on 1st period of day) */}
-                      {pIdx === 0 && (
-                        <td rowSpan="6" className="day-name-cell">
-                          {day.charAt(0) + day.slice(1).toLowerCase()}
+              <tbody>
+                {days.map((day) => (
+                  periods.map((period, pIdx) => {
+                    const sy = getCell("SY", day, period);
+                    const ty = getCell("TY", day, period);
+                    const btech = getCell("BTECH", day, period);
+                    const eedp = getExternal("FY-EEDP", day, period);
+                    const pps = getExternal("FY-PPS", day, period);
+                    const pcc = getExternal("FY-PCC", day, period);
+
+                    return (
+                      <tr key={`${day}-${period}`} className={pIdx === 0 ? "day-start-row" : ""}>
+                        {/* Day Name (Only on 1st period of day) */}
+                        {pIdx === 0 && (
+                          <td rowSpan="6" className="day-name-cell">
+                            {day.charAt(0) + day.slice(1).toLowerCase()}
+                          </td>
+                        )}
+
+                        <td className="sr-cell">{period}</td>
+                        <td className="time-cell">
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: "1.2" }}>
+                            <span>{periodTimings[pIdx].split("-")[0]?.trim()}</span>
+                            <span>To</span>
+                            <span>{periodTimings[pIdx].split("-")[1]?.trim()}</span>
+                          </div>
                         </td>
-                      )}
 
-                      <td className="sr-cell">{period}</td>
-                      <td className="time-cell">{periodTimings[pIdx]}</td>
+                        {/* SY Cells */}
+                        {(selectedView === "ALL" || selectedView === "SY") && renderYearSlot("SY", day, period, sy)}
 
-                      {/* SY Cells */}
-                      {(selectedView === "ALL" || selectedView === "SY") && renderYearSlot("SY", day, period, sy)}
+                        {/* TY Cells */}
+                        {(selectedView === "ALL" || selectedView === "TY") && renderYearSlot("TY", day, period, ty)}
 
-                      {/* TY Cells */}
-                      {(selectedView === "ALL" || selectedView === "TY") && renderYearSlot("TY", day, period, ty)}
+                        {/* BTECH Cells */}
+                        {(selectedView === "ALL" || selectedView === "BTECH") && renderYearSlot("BTECH", day, period, btech)}
 
-                      {/* BTECH Cells */}
-                      {(selectedView === "ALL" || selectedView === "BTECH") && renderYearSlot("BTECH", day, period, btech)}
+                        {/* External FY Loads */}
+                        {selectedView === "ALL" && (
+                          <>
+                            <td
+                              className="ext-cell"
+                              onClick={() => openExternalLoadEditor("FY-EEDP", day, period)}
+                              style={{ cursor: !swapModeEnabled ? "pointer" : "default" }}
+                              title={!swapModeEnabled ? "Click to edit FY-EEDP load ✏️" : ""}
+                            >
+                              {eedp}
+                            </td>
+                            <td
+                              className="ext-cell"
+                              onClick={() => openExternalLoadEditor("FY-PPS", day, period)}
+                              style={{ cursor: !swapModeEnabled ? "pointer" : "default" }}
+                              title={!swapModeEnabled ? "Click to edit FY-PPS load ✏️" : ""}
+                            >
+                              {pps}
+                            </td>
+                            <td
+                              className="ext-cell"
+                              onClick={() => openExternalLoadEditor("FY-PCC", day, period)}
+                              style={{ cursor: !swapModeEnabled ? "pointer" : "default" }}
+                              title={!swapModeEnabled ? "Click to edit FY-PCC load ✏️" : ""}
+                            >
+                              {pcc}
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    );
+                  })
+                ))}
 
-                      {/* External FY Loads */}
-                      {selectedView === "ALL" && (
-                        <>
-                          <td
-                            className="ext-cell"
-                            onClick={() => openExternalLoadEditor("FY-EEDP", day, period)}
-                            style={{ cursor: !swapModeEnabled ? "pointer" : "default" }}
-                            title={!swapModeEnabled ? "Click to edit FY-EEDP load ✏️" : ""}
-                          >
-                            {eedp}
-                          </td>
-                          <td
-                            className="ext-cell"
-                            onClick={() => openExternalLoadEditor("FY-PPS", day, period)}
-                            style={{ cursor: !swapModeEnabled ? "pointer" : "default" }}
-                            title={!swapModeEnabled ? "Click to edit FY-PPS load ✏️" : ""}
-                          >
-                            {pps}
-                          </td>
-                          <td
-                            className="ext-cell"
-                            onClick={() => openExternalLoadEditor("FY-PCC", day, period)}
-                            style={{ cursor: !swapModeEnabled ? "pointer" : "default" }}
-                            title={!swapModeEnabled ? "Click to edit FY-PCC load ✏️" : ""}
-                          >
-                            {pcc}
-                          </td>
-                        </>
-                      )}
-                    </tr>
-                  );
-                })
-              ))}
-
-              {/* Total Contact Hours Summary Row */}
-              <tr className="total-hours-row">
-                <td colSpan="3" className="total-label">Total Contact Hrs</td>
-                {(selectedView === "ALL" || selectedView === "SY") && (
-                  <td colSpan="3" className="total-val">
-                    {masterData?.totalContactHours?.SY || 28}
-                  </td>
-                )}
-                {(selectedView === "ALL" || selectedView === "TY") && (
-                  <td colSpan="3" className="total-val">
-                    {masterData?.totalContactHours?.TY || 27}
-                  </td>
-                )}
-                {(selectedView === "ALL" || selectedView === "BTECH") && (
-                  <td colSpan="3" className="total-val">
-                    {masterData?.totalContactHours?.BTECH || 25}
-                  </td>
-                )}
-                {selectedView === "ALL" && <td colSpan="3"></td>}
-              </tr>
-            </tbody>
-          </table>
+                {/* Total Contact Hours Summary Row */}
+                <tr className="total-hours-row">
+                  <td colSpan="3" className="total-label">Total Contact Hrs</td>
+                  {(selectedView === "ALL" || selectedView === "SY") && (
+                    <td colSpan="3" className="total-val">
+                      {masterData?.totalContactHours?.SY || 28}
+                    </td>
+                  )}
+                  {(selectedView === "ALL" || selectedView === "TY") && (
+                    <td colSpan="3" className="total-val">
+                      {masterData?.totalContactHours?.TY || 27}
+                    </td>
+                  )}
+                  {(selectedView === "ALL" || selectedView === "BTECH") && (
+                    <td colSpan="3" className="total-val">
+                      {masterData?.totalContactHours?.BTECH || 25}
+                    </td>
+                  )}
+                  {selectedView === "ALL" && <td colSpan="3"></td>}
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
       )}
 
       {/* =========================================================================
@@ -8650,74 +8001,7 @@ function MasterTimetable() {
           ========================================================================= */}
       {selectedView === "CLASS" && (
         <div className="class-view-container">
-          {/* Class View Header Controls Bar */}
-          <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: "13px", fontWeight: 700, color: "#1e3a8a" }}>
-                Class View Mode:
-              </span>
-              <button
-                type="button"
-                className={`sub-view-btn ${classPrintViewMode === "OFFICIAL" ? "active" : ""}`}
-                onClick={() => setClassPrintViewMode("OFFICIAL")}
-                style={{
-                  fontWeight: 700,
-                  fontSize: "12px",
-                  background: classPrintViewMode === "OFFICIAL" ? "#2563eb" : "#f1f5f9",
-                  color: classPrintViewMode === "OFFICIAL" ? "white" : "#334155",
-                  borderColor: classPrintViewMode === "OFFICIAL" ? "#1d4ed8" : "#cbd5e1"
-                }}
-              >
-                📜 Official Institutional Print View
-              </button>
-              <button
-                type="button"
-                className={`sub-view-btn ${classPrintViewMode === "MODERN" ? "active" : ""}`}
-                onClick={() => setClassPrintViewMode("MODERN")}
-                style={{
-                  fontWeight: 700,
-                  fontSize: "12px",
-                  background: classPrintViewMode === "MODERN" ? "#2563eb" : "#f1f5f9",
-                  color: classPrintViewMode === "MODERN" ? "white" : "#334155",
-                  borderColor: classPrintViewMode === "MODERN" ? "#1d4ed8" : "#cbd5e1"
-                }}
-              >
-                ⚙️ Interactive Schedule Grid
-              </button>
-            </div>
 
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => handleExportCurrentClassExcel(selectedClassYear)}
-                style={{
-                  background: "#10b981",
-                  color: "white",
-                  borderColor: "#059669",
-                  fontWeight: 700,
-                  fontSize: "12px",
-                  padding: "6px 12px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  borderRadius: "6px",
-                  cursor: "pointer"
-                }}
-                title={`Download ${selectedClassYear} ${getSemesterForYear(selectedClassYear, academicSemester)} Timetable (.xlsx)`}
-              >
-                📥 Download Excel (.xlsx)
-              </button>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => window.print()}
-                style={{ fontSize: "12px", padding: "6px 14px", display: "inline-flex", alignItems: "center", gap: "5px" }}
-              >
-                🖨️ Print Class Timetable
-              </button>
-            </div>
-          </div>
 
           {/* OFFICIAL INSTITUTIONAL PRINT VIEW (Exact match to uploaded benchmark document) */}
           <div className={`official-class-sheet-wrapper ${classPrintViewMode === "MODERN" ? "only-print" : ""}`} style={{ marginBottom: "25px" }}>
@@ -9037,6 +8321,41 @@ function MasterTimetable() {
               })()}
             </div>
           )}
+
+          {/* Class View Bottom Controls Bar */}
+          <div className="no-print" style={{ display: "flex", justifyContent: "flex-start", alignItems: "center", marginTop: "14px", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => handleExportCurrentClassExcel(selectedClassYear)}
+                style={{
+                  background: "#10b981",
+                  color: "white",
+                  borderColor: "#059669",
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  padding: "6px 12px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  borderRadius: "6px",
+                  cursor: "pointer"
+                }}
+                title={`Download ${selectedClassYear} ${getSemesterForYear(selectedClassYear, academicSemester)} Timetable (.xlsx)`}
+              >
+                📥 Download Excel (.xlsx)
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => window.print()}
+                style={{ fontSize: "12px", padding: "6px 14px", display: "inline-flex", alignItems: "center", gap: "5px" }}
+              >
+                🖨️ Print Class Timetable
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -9059,84 +8378,7 @@ function MasterTimetable() {
 
             return (
               <>
-                {/* Control & Mode Switcher Bar */}
-                <div className="sub-view-bar no-print" style={{ marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                    <span className="sub-view-label">Display Mode:</span>
-                    <button
-                      type="button"
-                      className={`sub-view-btn ${facultyPrintViewMode === "OFFICIAL" ? "active" : ""}`}
-                      onClick={() => setFacultyPrintViewMode("OFFICIAL")}
-                      style={{ fontWeight: 700 }}
-                    >
-                      📋 Official Institutional Print View (RIT Image Format)
-                    </button>
-                    <button
-                      type="button"
-                      className={`sub-view-btn ${facultyPrintViewMode === "MODERN" ? "active" : ""}`}
-                      onClick={() => setFacultyPrintViewMode("MODERN")}
-                      style={{ fontWeight: 700 }}
-                    >
-                      📊 Modern Analytics View
-                    </button>
-                  </div>
 
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                    <select
-                      value={academicSession}
-                      onChange={(e) => setAcademicSession(e.target.value)}
-                      style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: 700 }}
-                      title="Select Academic Year Session"
-                    >
-                      <option value="2026-27">2026-27</option>
-                      <option value="2025-26">2025-26</option>
-                      <option value="2024-25">2024-25</option>
-                    </select>
-
-                    <select
-                      value={academicSemester}
-                      onChange={(e) => setAcademicSemester(e.target.value)}
-                      style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", fontWeight: 700 }}
-                      title="Select Academic Term"
-                    >
-                      <option value="PART-I">PART-I (Odd Semester)</option>
-                      <option value="PART-II">PART-II (Even Semester)</option>
-                    </select>
-
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={() => {
-                        const facObj = (inputs.faculties || []).find((f) => f.name === selectedFaculty);
-                        exportPersonalTimetableToExcel({
-                          facultyCode: selectedFaculty,
-                          facultyName: getFacultyFullName(selectedFaculty),
-                          designation: facObj?.designation || "Assistant Professor",
-                          centralAuthority: facObj?.centralAuthority || "None",
-                          academicSession,
-                          academicSemester,
-                          facSched,
-                          assignments: asgn,
-                          days
-                        });
-                      }}
-                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "6px 12px", fontSize: "12px", background: "#16a34a", borderColor: "#15803d" }}
-                      title="Save Personal Timetable directly to Excel file (.xlsx)"
-                    >
-                      📥 Download Excel (.xlsx)
-                    </button>
-
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => window.print()}
-                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "6px 12px", fontSize: "12px" }}
-                      title="Print official personal timetable"
-                    >
-                      🖨️ Print Timetable
-                    </button>
-                  </div>
-                </div>
 
                 {/* VIEW 1: OFFICIAL INSTITUTIONAL PRINT VIEW (EXACT RIT IMAGE REPLICA) */}
                 {facultyPrintViewMode === "OFFICIAL" ? (
@@ -9398,6 +8640,42 @@ function MasterTimetable() {
                     </div>
                   </>
                 )}
+
+                {/* Bottom Centered Action Buttons */}
+                <div className="no-print" style={{ display: "flex", justifyContent: "center", gap: "16px", marginTop: "32px", marginBottom: "16px" }}>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => {
+                      const facObj = (inputs.faculties || []).find((f) => f.name === selectedFaculty);
+                      exportPersonalTimetableToExcel({
+                        facultyCode: selectedFaculty,
+                        facultyName: getFacultyFullName(selectedFaculty),
+                        designation: facObj?.designation || "Assistant Professor",
+                        centralAuthority: facObj?.centralAuthority || "None",
+                        academicSession,
+                        academicSemester,
+                        facSched,
+                        assignments: asgn,
+                        days
+                      });
+                    }}
+                    style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "10px 20px", fontSize: "14px", background: "#16a34a", borderColor: "#15803d", color: "white", borderRadius: "8px", fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 6px -1px rgba(22, 163, 74, 0.2)" }}
+                    title="Save Personal Timetable directly to Excel file (.xlsx)"
+                  >
+                    📥 Download Excel (.xlsx)
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => window.print()}
+                    style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "10px 20px", fontSize: "14px", background: "white", border: "1px solid #cbd5e1", color: "#334155", borderRadius: "8px", fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05)" }}
+                    title="Print official personal timetable"
+                  >
+                    🖨️ Print Timetable
+                  </button>
+                </div>
               </>
             );
           })()}
@@ -9775,25 +9053,6 @@ function MasterTimetable() {
 
         return (
           <div className="load-sheet-container" style={{ marginBottom: "30px" }}>
-            {/* Meta Banner */}
-            <div className="perspective-header-card">
-              <div className="perspective-meta-item">
-                <span>Academic Document</span>
-                <strong style={{ fontSize: "16px", color: "#1e3a8a" }}>Department Faculty Workload Allocation Sheet</strong>
-              </div>
-              <div className="perspective-meta-item">
-                <span>Department & Institute</span>
-                <strong>Department of Information Technology, RIT</strong>
-              </div>
-              <div className="perspective-meta-item">
-                <span>Academic Term</span>
-                <strong>Academic Year 2024-25 • Odd Semester</strong>
-              </div>
-              <div className="perspective-meta-item">
-                <span>Total Active Staff</span>
-                <strong style={{ color: "#7e22ce" }}>{facultiesList.length} Faculty Members</strong>
-              </div>
-            </div>
 
             {/* Department Summary Metrics */}
             <div className="analytics-grid">
@@ -9836,9 +9095,7 @@ function MasterTimetable() {
                   <h3 style={{ margin: 0, fontSize: "15px", color: "#0f172a" }}>
                     📋 Total Staff Load Sheet — Detailed Course & Laboratory Allocations
                   </h3>
-                  <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
-                    Official breakdown of theory lectures, practical labs, and external academic duties
-                  </p>
+
                 </div>
                 <button
                   type="button"
@@ -9857,8 +9114,7 @@ function MasterTimetable() {
                       <th style={{ padding: "10px 10px", width: "45px", textAlign: "center" }}>Sr.</th>
                       <th style={{ padding: "10px 10px", width: "75px" }}>Faculty</th>
                       <th style={{ padding: "10px 10px", minWidth: "160px" }}>Faculty Full Name</th>
-                      <th style={{ padding: "10px 10px", minWidth: "150px" }}>Post / Designation</th>
-                      <th style={{ padding: "10px 10px", width: "100px", textAlign: "center" }}>Authority</th>
+
                       <th style={{ padding: "10px 10px", width: "85px" }}>Daily Cap</th>
                       <th style={{ padding: "10px 10px", minWidth: "200px" }}>Theory Courses (SY / TY / BTech)</th>
                       <th style={{ padding: "10px 10px", minWidth: "160px" }}>Practical Labs</th>
@@ -9901,27 +9157,7 @@ function MasterTimetable() {
                           <td style={{ padding: "10px 10px", fontWeight: 600, color: "#0f172a" }}>
                             {f.fullName || f.name}
                           </td>
-                          <td style={{ padding: "10px 10px", color: "#334155", fontWeight: 500 }}>
-                            {f.designation || "Assistant Professor"}
-                          </td>
-                          <td style={{ padding: "10px 10px", textAlign: "center" }}>
-                            {f.centralAuthority && f.centralAuthority !== "None" ? (
-                              <span style={{
-                                background: "#faf5ff",
-                                color: "#7e22ce",
-                                border: "1px solid #d8b4fe",
-                                padding: "2px 8px",
-                                borderRadius: "10px",
-                                fontSize: "11px",
-                                fontWeight: 700,
-                                display: "inline-block"
-                              }}>
-                                {f.centralAuthority}
-                              </span>
-                            ) : (
-                              <span style={{ color: "#94a3b8", fontSize: "11.5px" }}>—</span>
-                            )}
-                          </td>
+
                           <td style={{ padding: "10px 10px", color: "#64748b", fontSize: "12px" }}>
                             {f.maxDailyLectures || 4} hrs/day
                           </td>
@@ -10042,183 +9278,93 @@ function MasterTimetable() {
 
         return (
           <div className="faculty-master-container" style={{ marginBottom: "30px" }}>
-            {/* Meta Banner */}
-            <div className="perspective-header-card">
-              <div className="perspective-meta-item">
-                <span>Timetable Schedule</span>
-                <strong style={{ fontSize: "16px", color: "#1e3a8a" }}>Master Personal Faculty Time Table</strong>
-              </div>
-              <div className="perspective-meta-item">
-                <span>Department Staff</span>
-                <strong>{faculties.length} Teaching Faculties Synchronized</strong>
-              </div>
-              <div className="perspective-meta-item">
-                <span>Current View Mode</span>
-                <strong style={{ color: "#7e22ce" }}>
-                  {facultyMasterDay === "ALL" ? "All Working Days (Mon to Fri)" : `${facultyMasterDay.charAt(0) + facultyMasterDay.slice(1).toLowerCase()} Day Schedule`}
-                </strong>
-              </div>
-              <div className="perspective-meta-item">
-                <span>Working Slots</span>
-                <strong>6 Periods / Day + 2 Recess Breaks</strong>
-              </div>
-            </div>
 
-            {/* Render Day-by-Day Master Tables */}
-            {daysToRender.map((day) => {
-              return (
-                <div key={day} className="horizontal-schedule-card" style={{ marginBottom: "24px" }}>
-                  <div style={{
-                    padding: "10px 16px",
-                    background: "#f8fafc",
-                    borderBottom: "2px solid #cbd5e1",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center"
-                  }}>
-                    <div style={{ fontWeight: 800, fontSize: "13.5px", color: "#1e3a8a" }}>
-                      📅 {day.charAt(0) + day.slice(1).toLowerCase()} Master Faculty Matrix
-                    </div>
-                    <span style={{ fontSize: "11.5px", color: "#64748b", fontWeight: 600 }}>
-                      All Faculty Synchronized Schedule
-                    </span>
-                  </div>
 
-                  <div className="table-responsive">
-                    <table className="horizontal-schedule-table">
-                      <thead>
-                        <tr>
-                          <th style={{ width: "75px" }}>Faculty</th>
-                          <th style={{ width: "160px" }}>Full Name</th>
-                          <th>Period 1<div className="th-time">10:00 To 11:00</div></th>
-                          <th>Period 2<div className="th-time">11:00 To 12:00</div></th>
-                          <th className="th-break" title="Recess (12:00 To 12:45)"></th>
-                          <th>Period 3<div className="th-time">12:45 To 01:45</div></th>
-                          <th>Period 4<div className="th-time">01:45 To 02:45</div></th>
-                          <th className="th-break" title="Recess (02:45 To 03:00)"></th>
-                          <th>Period 5<div className="th-time">03:00 To 04:00</div></th>
-                          <th>Period 6<div className="th-time">04:00 To 05:00</div></th>
-                          <th style={{ width: "70px" }}>Day Load</th>
+            {/* Render Excel-style Master Table */}
+            <div className="table-responsive">
+              <table className="master-table excel-style-table" style={{ width: "100%", fontSize: "10px", borderCollapse: "collapse", textAlign: "center", border: "2px solid #1e3a8a", background: "#ffffff" }}>
+                <thead>
+                  {/* Institutional Info (Visible in Print & Screen) */}
+                  <tr>
+                    <th colSpan={3 + faculties.length * 3} style={{ border: "1px solid #1e3a8a", padding: "4px", fontSize: "14px", fontWeight: 800, background: "#ffffff" }}>K.E.Society's</th>
+                  </tr>
+                  <tr>
+                    <th colSpan={3 + faculties.length * 3} style={{ border: "1px solid #1e3a8a", padding: "4px", fontSize: "14px", fontWeight: 800, background: "#ffffff" }}>Rajarambapu Institute of Technology, Rajaramnagar</th>
+                  </tr>
+                  <tr>
+                    <th colSpan={3 + faculties.length * 3} style={{ border: "1px solid #1e3a8a", padding: "4px", fontSize: "14px", fontWeight: 800, background: "#ffffff" }}>Department of Information Technology</th>
+                  </tr>
+                  <tr>
+                    <th colSpan={3 + faculties.length * 3} style={{ border: "1px solid #1e3a8a", padding: "4px", fontSize: "13px", fontWeight: 700, background: "#ffffff" }}>Master Class Time Table</th>
+                  </tr>
+                  <tr>
+                    <th colSpan={3 + faculties.length * 3} style={{ border: "1px solid #1e3a8a", padding: "4px", fontSize: "12px", fontWeight: 700, background: "#ffffff" }}>YEAR / PART-I</th>
+                  </tr>
+                  {/* Top Header Row for Faculty Names */}
+                  <tr>
+                    <th rowSpan="2" style={{ border: "1px solid #1e3a8a", width: "20px", fontSize: "10px", background: "#f8fafc", padding: "2px" }}>Day</th>
+                    <th rowSpan="2" style={{ border: "1px solid #1e3a8a", width: "25px", fontSize: "10px", background: "#f8fafc", padding: "2px" }}>Sr No</th>
+                    <th rowSpan="2" style={{ border: "1px solid #1e3a8a", width: "45px", fontSize: "10px", background: "#f8fafc", padding: "2px" }}>Time</th>
+                    {facultySchedules.map(({ faculty: f }) => (
+                      <th key={f.name} colSpan="3" style={{ border: "1px solid #1e3a8a", padding: "4px", background: "#f8fafc" }}>
+                        <div style={{ fontWeight: 800, color: "#1e3a8a", fontSize: "12px" }}>{f.name}</div>
+                      </th>
+                    ))}
+                  </tr>
+                  {/* Sub-Header Row for Class, Course, Location */}
+                  <tr>
+                    {facultySchedules.map(({ faculty: f }) => (
+                      <Fragment key={f.name + "_sub"}>
+                        <th style={{ border: "1px solid #1e3a8a", width: "35px", fontSize: "9px", padding: "2px", background: "#f1f5f9", color: "#334155" }}>Class</th>
+                        <th style={{ border: "1px solid #1e3a8a", width: "50px", fontSize: "9px", padding: "2px", background: "#f1f5f9", color: "#334155" }}>Course</th>
+                        <th style={{ border: "1px solid #1e3a8a", width: "45px", fontSize: "9px", padding: "2px", background: "#f1f5f9", color: "#334155" }}>Location</th>
+                      </Fragment>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {daysToRender.map((day) => (
+                    <Fragment key={day}>
+                      {[1, 2, 3, 4, 5, 6].map((p, pIdx) => (
+                        <tr key={`${day}-${p}`}>
+                          {pIdx === 0 && (
+                            <td rowSpan="6" style={{ border: "1px solid #1e3a8a", fontWeight: 800, fontSize: "11px", color: "#1e3a8a", letterSpacing: "1px", textAlign: "center", verticalAlign: "middle", background: "#ffffff", padding: "2px" }}>
+                              <div style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", display: "inline-block" }}>
+                                {day.charAt(0) + day.slice(1).toLowerCase()}
+                              </div>
+                            </td>
+                          )}
+                          <td style={{ border: "1px solid #1e3a8a", fontWeight: 700, fontSize: "9.5px", color: "#0f172a", background: "#ffffff", padding: "2px" }}>{p}</td>
+                          <td style={{ border: "1px solid #1e3a8a", fontSize: "8px", color: "#475569", fontWeight: 600, background: "#ffffff", whiteSpace: "pre-line", padding: "1px" }}>
+                            {periodTimings[p - 1].replace(" To ", "\nTo\n")}
+                          </td>
+                          {facultySchedules.map(({ faculty: f, schedule: sched }) => {
+                            const entry = sched.grid[day]?.[p];
+                            if (!entry) {
+                              return (
+                                <Fragment key={f.name + "_empty"}>
+                                  <td style={{ border: "1px solid #cbd5e1", background: "#ffffff" }}></td>
+                                  <td style={{ border: "1px solid #cbd5e1", background: "#ffffff" }}></td>
+                                  <td style={{ border: "1px solid #cbd5e1", background: "#ffffff" }}></td>
+                                </Fragment>
+                              );
+                            }
+                            return (
+                              <Fragment key={f.name + "_entry"}>
+                                <td style={{ border: "1px solid #cbd5e1", fontWeight: 700, fontSize: "9.5px", color: "#1e3a8a", background: "#ffffff" }}>{entry.year}</td>
+                                <td style={{ border: "1px solid #cbd5e1", fontWeight: 700, fontSize: "9.5px", color: "#0f172a", background: "#ffffff" }}>{entry.course}</td>
+                                <td style={{ border: "1px solid #cbd5e1", fontWeight: 600, fontSize: "9.5px", color: "#059669", background: "#ffffff" }}>{entry.location}</td>
+                              </Fragment>
+                            );
+                          })}
                         </tr>
-                      </thead>
-                      <tbody>
-                        {facultySchedules.map(({ faculty: f, schedule: sched }, idx) => {
-                          const dailyLoad = sched.stats.dailyLoads[day] || 0;
-                          return (
-                            <tr key={f.name} style={{ background: idx % 2 === 0 ? "#ffffff" : "#fbfcfe" }}>
-                              <td style={{ fontWeight: 700, color: "#1e3a8a" }}>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedFaculty(f.name);
-                                    setSelectedView("FACULTY");
-                                  }}
-                                  style={{
-                                    background: "#eff6ff",
-                                    border: "1px solid #bfdbfe",
-                                    padding: "2px 6px",
-                                    borderRadius: "4px",
-                                    cursor: "pointer",
-                                    fontWeight: 700,
-                                    color: "#1d4ed8",
-                                    fontSize: "11px"
-                                  }}
-                                  title={`View full personal schedule for Prof. ${f.fullName || f.name}`}
-                                >
-                                  {f.name}
-                                </button>
-                              </td>
-                              <td style={{ textAlign: "left", paddingLeft: "8px", fontWeight: 600, fontSize: "11.5px", color: "#334155" }}>
-                                {f.fullName || f.name}
-                              </td>
+                      ))}
 
-                              {[1, 2].map((p) => {
-                                const entry = sched.grid[day]?.[p];
-                                if (!entry) {
-                                  return (
-                                    <td key={p} style={{ color: "#cbd5e1", fontSize: "11px" }}>
-                                      —
-                                    </td>
-                                  );
-                                }
-                                return (
-                                  <td key={p} className={`schedule-slot-cell ${entry.badgeClass || ""}`} style={{ padding: "4px" }}>
-                                    <div style={{ fontSize: "10.5px", fontWeight: 700, color: "#0f172a" }}>
-                                      {entry.year} • {entry.course}
-                                    </div>
-                                    <div style={{ fontSize: "9.5px", color: "#475569" }}>
-                                      📍 {entry.location}
-                                    </div>
-                                  </td>
-                                );
-                              })}
-
-                              {idx === 0 && (
-                                <td rowSpan={facultySchedules.length} className="break-col-cell">
-                                  <span className="vertical-break-text">RECESS</span>
-                                </td>
-                              )}
-
-                              {[3, 4].map((p) => {
-                                const entry = sched.grid[day]?.[p];
-                                if (!entry) {
-                                  return (
-                                    <td key={p} style={{ color: "#cbd5e1", fontSize: "11px" }}>
-                                      —
-                                    </td>
-                                  );
-                                }
-                                return (
-                                  <td key={p} className={`schedule-slot-cell ${entry.badgeClass || ""}`} style={{ padding: "4px" }}>
-                                    <div style={{ fontSize: "10.5px", fontWeight: 700, color: "#0f172a" }}>
-                                      {entry.year} • {entry.course}
-                                    </div>
-                                    <div style={{ fontSize: "9.5px", color: "#475569" }}>
-                                      📍 {entry.location}
-                                    </div>
-                                  </td>
-                                );
-                              })}
-
-                              {idx === 0 && (
-                                <td rowSpan={facultySchedules.length} className="break-col-cell">
-                                  <span className="vertical-break-text">RECESS</span>
-                                </td>
-                              )}
-
-                              {[5, 6].map((p) => {
-                                const entry = sched.grid[day]?.[p];
-                                if (!entry) {
-                                  return (
-                                    <td key={p} style={{ color: "#cbd5e1", fontSize: "11px" }}>
-                                      —
-                                    </td>
-                                  );
-                                }
-                                return (
-                                  <td key={p} className={`schedule-slot-cell ${entry.badgeClass || ""}`} style={{ padding: "4px" }}>
-                                    <div style={{ fontSize: "10.5px", fontWeight: 700, color: "#0f172a" }}>
-                                      {entry.year} • {entry.course}
-                                    </div>
-                                    <div style={{ fontSize: "9.5px", color: "#475569" }}>
-                                      📍 {entry.location}
-                                    </div>
-                                  </td>
-                                );
-                              })}
-
-                              <td style={{ fontWeight: 800, color: dailyLoad > 0 ? "#1e40af" : "#94a3b8", fontSize: "11.5px" }}>
-                                {dailyLoad > 0 ? `${dailyLoad}h` : "Off"}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              );
-            })}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         );
       })()}
@@ -10231,21 +9377,6 @@ function MasterTimetable() {
 
         return (
           <div className="room-master-container" style={{ marginBottom: "30px" }}>
-            {/* Perspective Header Card */}
-            <div className="perspective-header-card">
-              <div className="perspective-meta-item">
-                <span>Classroom Facility</span>
-                <strong style={{ fontSize: "16px", color: "#1e3a8a" }}>Master Classroom Time Table (All Theory Halls)</strong>
-              </div>
-              <div className="perspective-meta-item">
-                <span>Core Lecture Halls</span>
-                <strong>3 Classrooms (CR-27, CR-26, CR-212)</strong>
-              </div>
-              <div className="perspective-meta-item">
-                <span>Department Weekly Capacity</span>
-                <strong>90 Lecture Hours (3 × 30 Hours)</strong>
-              </div>
-            </div>
 
             {/* Room Utilization Comparison Summary */}
             <div className="index-card" style={{ marginBottom: "18px" }}>
@@ -10305,7 +9436,7 @@ function MasterTimetable() {
             {/* Synchronized Multi-Classroom Schedule Matrix */}
             <div className="horizontal-schedule-card">
               <div style={{ padding: "10px 14px", background: "#f8fafc", borderBottom: "1px solid #000", fontWeight: 700, fontSize: "12px", color: "#1e3a8a" }}>
-                🏛️ Synchronized Multi-Classroom Timetable Matrix (CR-27, CR-26 & CR-212 by Time Block)
+                Master Classroom Time Table
               </div>
               <div className="table-responsive">
                 <table className="horizontal-schedule-table">
@@ -12179,6 +11310,46 @@ function MasterTimetable() {
                   💾 Save Changes
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save Timetable Modal */}
+      {saveModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: "400px" }}>
+            <h3 style={{ marginTop: 0, color: "#0f172a" }}>Save Timetable Snapshot</h3>
+            <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "15px" }}>Enter a descriptive name for this timetable version to save it to the database.</p>
+            <input
+              type="text"
+              className="form-input"
+              value={saveTimetableName}
+              onChange={(e) => setSaveTimetableName(e.target.value)}
+              placeholder="e.g. SY IT Final Timetable"
+              style={{ width: "100%", marginBottom: "20px", padding: "10px" }}
+              autoFocus
+            />
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+              <button className="btn-secondary" onClick={() => setSaveModalOpen(false)}>Cancel</button>
+              <button className="btn-primary" onClick={async () => {
+                if (!saveTimetableName.trim()) {
+                  alert("Please enter a name for the timetable.");
+                  return;
+                }
+                try {
+                  await saveTimetableSnapshot({
+                    name: saveTimetableName.trim(),
+                    timetableData: JSON.stringify({ masterData, inputs })
+                  });
+                  alert("Timetable saved successfully!");
+                  setSaveModalOpen(false);
+                  setSaveTimetableName("");
+                } catch (e) {
+                  alert("Failed to save timetable. Please check the backend connection.");
+                  console.error(e);
+                }
+              }}>Save</button>
             </div>
           </div>
         </div>

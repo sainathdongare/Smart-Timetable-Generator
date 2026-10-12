@@ -2034,6 +2034,7 @@ td button {
   font-size: 11px;
   text-align: center;
   color: #1e293b;
+  table-layout: fixed;
 }
 
 .master-table th,
@@ -2116,7 +2117,7 @@ td button {
 
 .sub-entry-row {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr 40px 32px;
   gap: 6px;
   align-items: center;
   border-bottom: 1px dashed #e2e8f0;
@@ -2830,6 +2831,23 @@ td button {
   .index-table th,
   .index-table td {
     border: 1px solid #000 !important;
+    color: #000 !important;
+    background-color: transparent !important;
+  }
+
+  .header-group-row th,
+  .sub-header-row th {
+    background-color: transparent !important;
+    color: #000 !important;
+  }
+
+  .day-name-cell, .time-cell {
+    background-color: transparent !important;
+    color: #000 !important;
+  }
+
+  .hide-master-header-in-print {
+    display: none !important;
   }
 
   .page-break {

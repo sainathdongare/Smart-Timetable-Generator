@@ -1,0 +1,14 @@
+flowchart TD
+    Start([Start]) --> S2[Prepare Test Inputs]
+    S2 --> S3[Run Timetable Generation]
+    S3 --> S4[Check the Generated Timetable]
+    
+    S4 --> S5{Are Validation Checks<br/>Passed?}
+    
+    S5 -- No --> S6[Identify Conflicts, Refine Inputs/Code &<br/>Rerun Test]
+    S6 --> S3
+    
+    S5 -- Yes --> S7[Verify Faculty, Classroom & Class Schedules]
+    S7 --> S8[Check for Unscheduled Sessions & Diagnostic Messages]
+    S8 --> S9[Record Test Results]
+    S9 --> EndNode([End])

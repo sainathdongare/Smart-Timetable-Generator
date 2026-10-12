@@ -236,3 +236,36 @@ export async function saveTimetableConfig(config) {
   if (!response.ok) throw new Error(`Failed to save config: ${response.status}`);
   return await response.json();
 }
+
+// ==================== SAVED TIMETABLES (SNAPSHOTS) ====================
+export async function saveTimetableSnapshot(snapshot) {
+  const url = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8080") + "/api/saved-timetables";
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(snapshot)
+  });
+  if (!response.ok) throw new Error("Failed to save timetable snapshot");
+  return await response.json();
+}
+
+export async function getAllSavedTimetablesList() {
+  const url = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8080") + "/api/saved-timetables";
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Failed to fetch saved timetables");
+  return await response.json();
+}
+
+export async function getSavedTimetableById(id) {
+  const url = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8080") + "/api/saved-timetables/" + id;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Failed to fetch saved timetable");
+  return await response.json();
+}
+
+export async function deleteSavedTimetableById(id) {
+  const url = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8080") + "/api/saved-timetables/" + id;
+  const response = await fetch(url, { method: "DELETE" });
+  if (!response.ok) throw new Error("Failed to delete saved timetable");
+  return true;
+}

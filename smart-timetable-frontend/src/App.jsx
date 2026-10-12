@@ -5,6 +5,7 @@ import AdminLogin from "./pages/AdminLogin";
 import MainLayout from "./layouts/MainLayout";
 import DashboardHome from "./components/DashboardHome";
 import MasterTimetable from "./pages/MasterTimetable";
+import SavedTimetables from "./pages/SavedTimetables";
 import LandingPage from "./pages/LandingPage";
 
 function App() {
@@ -35,6 +36,16 @@ function App() {
               <ProtectedRoute>
                 <MainLayout>
                   <MasterTimetable />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/saved-timetables"
+            element={
+              <ProtectedRoute>
+                <MainLayout>
+                  <SavedTimetables />
                 </MainLayout>
               </ProtectedRoute>
             }
