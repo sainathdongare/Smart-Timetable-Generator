@@ -37,7 +37,9 @@ body {
 
 .sidebar {
   width: 252px;
-  min-height: calc(100vh - 38px);
+  height: calc(100vh - 38px);
+  position: sticky;
+  top: 38px;
   background-color: #0f172a;
   color: #e2e8f0;
   padding: 0;
@@ -45,11 +47,13 @@ body {
   flex-direction: column;
   flex-shrink: 0;
   border-right: 1px solid #1e293b;
+  z-index: 900;
 }
 
 .sidebar-logo {
   padding: 22px 20px 18px;
   border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
 }
 
 .sidebar-logo h2 {
@@ -75,6 +79,23 @@ body {
   gap: 2px;
   flex: 1;
   overflow-y: auto;
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  width: 5px;
+}
+
+.sidebar-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb:hover {
+  background: #475569;
 }
 
 .sidebar-nav a {

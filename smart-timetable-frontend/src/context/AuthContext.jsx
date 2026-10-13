@@ -28,13 +28,31 @@ export function AuthProvider({ children }) {
     const u = username.trim().toLowerCase();
     const p = password.trim();
 
-    if (u === "sainathdongare06@gmail.com" && p === "Sai@12345") {
+    if ((u === "user@gmail.com" || u === "user") && p === "12345") {
+      const sessionUser = {
+        username: "user",
+        name: "User",
+        email: "user@gmail.com",
+        department: "Department of Information Technology",
+        role: "Department User",
+        avatar: "U",
+        loginTime: new Date().toISOString()
+      };
+      setUser(sessionUser);
+      localStorage.setItem("rit_admin_session", JSON.stringify(sessionUser));
+      return { success: true };
+    }
+
+    if (
+      (u === "sainathdongare06@gmail.com" || u === "sainath@gmail.com" || u === "sainath") &&
+      (p === "12345")
+    ) {
       const sessionUser = {
         username: "sainath",
         name: "Sainath Dongare",
         email: "sainathdongare06@gmail.com",
         department: "Department of Information Technology",
-        role: "System Administrator",
+        role: "Student",
         avatar: "SD",
         loginTime: new Date().toISOString()
       };
